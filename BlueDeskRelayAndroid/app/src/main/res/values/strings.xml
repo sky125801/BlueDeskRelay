@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">BlueDesk Relay</string>
+    <string name="channel_connection">中转连接</string>
+    <string name="channel_connection_desc">保持与 BlueDesk 手机的蓝牙连接</string>
+    <string name="channel_received">接收内容</string>
+    <string name="channel_received_desc">收到文字或文件时提醒</string>
+</resources>

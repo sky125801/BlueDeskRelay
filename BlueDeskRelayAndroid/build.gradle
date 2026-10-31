@@ -1,0 +1,6 @@
+// 独立的 Android 中转客户端工程，不影响根目录的 BlueDesk 手机端。
+plugins {
+    alias(libs.plugins.android.application) apply false
+    alias(libs.plugins.kotlin.android) apply false
+    alias(libs.plugins.kotlin.compose) apply false
+}

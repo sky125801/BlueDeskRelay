@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- 需要 WinRT（Windows.Devices.Enumeration）来毫秒级枚举已配对蓝牙设备，
+         因此使用带 Windows SDK 版本号的 TFM（要求 Windows 10 2004 / build 19041 及以上）。 -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>BlueDeskRelay</AssemblyName>
+    <RootNamespace>BlueDeskRelay</RootNamespace>
+    <Version>1.0.0</Version>
+    <ApplicationHighDpiMode>SystemAware</ApplicationHighDpiMode>
+    <!-- 与 Android 端同风格的桌面 / 笔记本图标（橙色信号 + 米白设备） -->
+    <ApplicationIcon>Assets\BlueDeskRelay.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 32feet.NET：经典蓝牙 RFCOMM 客户端。
+         注意：原写的 4.1.20 在 NuGet 上并不存在（会被近似匹配到 4.1.40 并报 NU1603），
+         这里钉到真实存在的 4.1.40。不要升到 4.1.44 —— 该版本改了
+         BluetoothClient.DiscoverDevices 的重载参数名，会编译失败。 -->
+    <PackageReference Include="InTheHand.Net.Bluetooth" Version="4.1.40" />
+  </ItemGroup>
+
+</Project>

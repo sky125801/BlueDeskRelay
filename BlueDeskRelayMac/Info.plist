@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>BlueDesk Relay</string>
+    <key>CFBundleDisplayName</key>
+    <string>BlueDesk 互传助手</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.lingzhi.bluedesk.relay-mac</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleExecutable</key>
+    <string>BlueDeskRelayMac</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleVersion</key>
+    <string>1.0.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>12.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>BlueDesk 互传助手需要通过蓝牙与 BlueDesk 手机交换剪贴板与文件。</string>
+    <key>NSUserNotificationsUsageDescription</key>
+    <string>用于提示收发进度与连接状态。</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>需要读取 Finder 中选中的文件，以便按快捷键直接发送给手机。</string>
+    <key>NSServices</key>
+    <array>
+        <dict>
+            <key>NSMenuItem</key>
+            <dict>
+                <key>default</key>
+                <string>发送到 BlueDesk</string>
+            </dict>
+            <key>NSMessage</key>
+            <string>sendFilesToBlueDesk</string>
+            <key>NSPortName</key>
+            <string>BlueDesk Relay</string>
+            <key>NSSendFileTypes</key>
+            <array>
+                <string>public.item</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>
