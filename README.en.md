@@ -1,140 +1,115 @@
-# BlueDesk Relay (Windows)
+# BlueDesk Relay
 
 [简体中文](README.md) | **English** | [日本語](README.ja.md) | [한국어](README.ko.md)
 
-A Windows tray app that pairs with the **Relay** page of the BlueDesk mobile app.
-It talks to the phone over the classic Bluetooth SPP data channel, enabling
-**PC A → phone → PC B** transfer of text and small files.
+A set of companion apps for the **Relay** page of the BlueDesk mobile app, for three platforms.
+They talk to the phone over the classic Bluetooth SPP data channel, turning
+**PC A → phone → PC B** transfer of text and small files into a single click. The phone acts
+as a relay, so any endpoint can exchange content with it, and can also forward to another PC.
 
 > The data channel is independent of the HID (keyboard/mouse) channel, so a single
 > Bluetooth pairing serves both at the same time.
 
-## Features
+This repository holds one implementation per platform. They share the same wire protocol,
+so they **interoperate freely** — Windows sending to macOS, or Android to Windows, both work.
 
-- **Send**: right-click the tray icon to send the clipboard or a file (≤64 MB),
-  or press the global hotkey `Ctrl+Alt+B` to send the clipboard
-- **Send from the Explorer context menu**: select files → right-click → "Send to BlueDesk"
-  hands them straight to the phone. The app is launched automatically when it isn't running
-  and sends once connected (registered under HKCU, no admin rights required)
-- **Send with a hotkey**: select files in Explorer and press `Ctrl+Alt+F`.
-  When Explorer isn't in the foreground it falls back to files copied with `Ctrl+C`
-- **Receive**: text is written to the clipboard automatically (just press `Ctrl+V`,
-  Chinese text preserved); files are saved to `Downloads\BlueDesk`
-- **Manual connect**: the "Connect Device ▸" menu lists every paired device — click to connect
-  (the active device is checked, the remembered one is marked ★). Reconnects and restarts
-  prefer the remembered device; "Clear preferred" returns to auto-discovery
-- **Status**: automatic reconnect after a disconnect (every 5 s); balloon notifications
-  for connections and transfers
+## Capability matrix
+
+| Capability | Android | Windows | macOS |
+|---|:---:|:---:|:---:|
+| Send text | ✓ input box / paste / receive shares from other apps | ✓ clipboard | ✓ clipboard |
+| Send a single file | ✓ | ✓ | ✓ |
+| Send a whole folder | ✓ via SAF tree | ✓ `BATCH_*` frames | — |
+| Receive text → clipboard | ✓ plus a notification | ✓ plus a balloon | ✓ plus a notification |
+| Receive files | ✓ `Download/BlueDesk` | ✓ `Downloads\BlueDesk` | ✓ `~/Downloads/BlueDesk` |
+| Receive a folder | ✓ | ✓ | — |
+| Global hotkey | — | `Ctrl+Alt+B` / `Ctrl+Alt+F` | `Ctrl+Opt+B` / `Ctrl+Opt+F` |
+| OS integration | share target | Explorer context menu | Finder Services |
+| Runs in the background | foreground service + boot start | tray + `shell:startup` | menu bar + login items |
+| Honors the phone's transfer limit | ✓ | ✓ | — fixed at 64 MB |
+
+`—` means the feature isn't implemented on that platform yet; transfers between the other
+two still work.
+
+## At a glance
+
+### Android
+
+Kotlin + Jetpack Compose, with a foreground service keeping the connection alive. It can act
+as a system share target for text and files from other apps, and it can send whole folders.
+
+- **Requirements**: JDK 17, Android SDK 36 (`minSdk 29` / `targetSdk 36`)
+- **Build**: `cd BlueDeskRelayAndroid && ./gradlew assembleDebug`
+  → `app/build/outputs/apk/debug/app-debug.apk`
+- **Source**: `BlueDeskRelayAndroid/app/src/main/java/com/lingzhi/bluedesk/relayandroid/`
+
+### Windows
+
+A .NET 8 WinForms tray app with global hotkeys and an Explorer context menu entry
+("Send to BlueDesk").
+
+- **Requirements**: Windows 10 2004 (build 19041) or later, .NET 8 SDK
+- **Build**: `cd BlueDeskRelayWindows && dotnet build -c Release`
+  → `bin\Release\net8.0-windows10.0.19041.0\BlueDeskRelay.exe`
+- **Details**: [BlueDeskRelayWindows/README.md](BlueDeskRelayWindows/README.md)
+  (includes the NuGet `NU1301` build gotcha and the Connect Device menu)
+
+### macOS
+
+A Swift + SwiftPM menu bar app (`LSUIElement`) built on IOBluetooth classic RFCOMM,
+with Finder Services support and global hotkeys.
+
+- **Requirements**: macOS 12+, Xcode Command Line Tools
+- **Build**: `cd BlueDeskRelayMac && ./bundle.sh`
+  → `BlueDesk Relay.app`
+- **Details**: [BlueDeskRelayMac/README.md](BlueDeskRelayMac/README.md)
+
+## Wire protocol
+
+All three implementations are byte-for-byte aligned. The protocol lives in
+`RelayProtocol.kt` (Android), `Protocol.cs` (Windows) and `Protocol.swift` (macOS).
+
+- **Service UUID**: `a3bd7f2e-5c14-4a9e-9d1b-2f6e8c04bde1`
+- **Frame format**: 11-byte header (MAGIC / version / type / FLAGS / length / CRC32 low 16 bits)
+  plus payload
+- **Frame types**: `HELLO`, `TEXT`, `FILE_META`, `FILE_CHUNK`, `FILE_END`, `ACK`, `PING`, `PONG`,
+  `ERROR`, `CONFIG`, `BATCH_META`, `BATCH_END`
+- **Chunking**: files are split into 4 KB chunks
+- **Transfer limit**: 64 MB by default, pushed from the phone via a `CONFIG` frame
+  (0 means unlimited)
+- **Throughput**: the SPP channel measures roughly 50–200 KB/s, suited to text and files of
+  a few MB
 
 ## Languages
 
-All three platforms (Android / Windows / macOS) support **简体中文, English, 日本語, 한국어**.
-The language follows the system setting automatically; anything else falls back to English.
+All three platforms support **简体中文, English, 日本語, 한국어**. The language follows the
+system setting automatically; anything else falls back to English.
 
 | Platform | Where the strings live |
 |---|---|
-| Windows | `BlueDeskRelayWindows/Strings.cs` (four languages inline, picked via `CultureInfo.CurrentUICulture`) |
 | Android | `app/src/main/res/values*/strings.xml` (English default + `values-zh` / `-ja` / `-ko`) |
+| Windows | `BlueDeskRelayWindows/Strings.cs` (four languages inline, picked via `CultureInfo.CurrentUICulture`) |
 | macOS | `Sources/BlueDeskRelayMac/Localization.swift` (UI strings)<br>`Resources/<lang>.lproj/InfoPlist.strings` (system permission prompts, Finder service name) |
 
 > Adding a language: add the matching resource file on each platform; `Strings.cs`'s
 > `Get(zh, en, ja, ko)` needs one more argument.
-> Logs (`relay.log`, `NSLog`) are intentionally kept in Chinese so they can be read
-> alongside the source; they are not UI strings.
+> Logs (`relay.log`, `NSLog`) are intentionally kept in Chinese so they can be read alongside
+> the source; they are not UI strings.
 
-## Build requirements
+This README is also available in four languages — see the switcher at the top of each file.
 
-- Windows 10 2004 (build 19041) or later / Windows 11
-  — WinRT is used to enumerate paired devices, hence the
-  `net8.0-windows10.0.19041.0` TFM
-- .NET 8 SDK (`winget install Microsoft.DotNet.SDK.8`)
+## Usage (common to all platforms)
 
-```powershell
-cd BlueDeskRelay
-dotnet build -c Release
-# output: bin\Release\net8.0-windows10.0.19041.0\BlueDeskRelay.exe
-```
-
-For a single-file build:
-
-```powershell
-dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true
-# output: bin\Release\net8.0-windows10.0.19041.0\win-x64\publish\BlueDeskRelay.exe
-```
-
-### Build gotcha: missing local NuGet source (NU1301)
-
-If `dotnet restore` fails with:
-
-```
-error NU1301: The local source 'd:\Program Files (x86)\Microsoft Visual Studio\Shared\NuGetPackages' doesn't exist
-```
-
-this is a **stale global Visual Studio configuration on your machine**, not a problem
-with the project. It comes from
-`C:\Program Files (x86)\NuGet\Config\Microsoft.VisualStudio.FallbackLocation.config`,
-which declares a `fallbackPackageFolders` entry pointing at a D: drive that doesn't exist here.
-
-The repo ships a `nuget.config` at the root that clears the inherited fallback folders,
-so builds run from this directory just work — no admin rights, no system changes.
-
-Note it only applies to projects under this directory. Creating a new .NET project
-elsewhere will hit the same error; copy `nuget.config` over, or fix the global config
-above with admin rights.
-
-## Usage
-
-1. **Pair**: Windows Settings → Bluetooth → Add device, pair with the phone
-   (BlueDesk-XXXXXX) once. Pairing sets up credentials for both the HID (keyboard/mouse)
-   and SPP (data) channels.
+1. **Pair**: pair with the phone (`BlueDesk-XXXXXX`) once in your system Bluetooth settings.
+   Pairing sets up credentials for both the HID (keyboard/mouse) and SPP (data) channels.
 2. **Phone**: open BlueDesk → the "Relay" tab at the bottom → turn on Relay.
-3. **PC**: start `BlueDeskRelay.exe` (drop it into `shell:startup` to run at login).
-   It auto-discovers the paired BlueDesk phone and connects; the tray shows "Connected".
-   - If the phone shows up under its real model name (`S25U`, `SM-S9380`, …) instead of
-     `BlueDesk*`, auto-discovery won't find it — pick it once via the tray menu
-     **Connect Device ▸** and it will be remembered.
-4. **Transfer**:
-   - PC A: `Ctrl+Alt+B` or the tray menu sends the clipboard → a record appears on the
-     phone's Relay page;
-   - Phone: tap "Forward…" on that record and pick PC B → B writes the clipboard / saves
-     the file and shows a balloon notification.
+3. **PC**: start the app for your platform; it auto-discovers the paired BlueDesk phone and
+   connects. If the phone shows up under its real model name (`S25U`, `SM-S9380`, …) instead
+   of `BlueDesk*`, auto-discovery may miss it — pick it once under "Connect Device" and it will
+   be remembered.
+4. **Transfer**: PC A sends → a record appears on the phone's Relay page → tap "Forward…" and
+   pick PC B → B writes the clipboard or saves the file and shows a prompt.
 
-## The Connect Device menu
+## License
 
-| Element | Meaning |
-|---|---|
-| ✓ checked | The device currently connected |
-| ★ name (remembered) | The remembered device while disconnected; reconnects and restarts prefer it |
-| Refresh device list | Re-read the system pairing list (use right after pairing a new device) |
-| Clear preferred | Forget the remembered device and go back to auto-discovering the first `BlueDesk*` |
-
-The remembered address is stored in `%APPDATA%\BlueDesk\relay.json`. Reconnecting with a
-cached address is direct (under a second) instead of a 10–20 second Bluetooth inquiry;
-if the address goes stale (new phone / unpaired) it falls back to device discovery.
-
-## Technical notes
-
-- Bluetooth stack: [32feet.NET](https://github.com/inthehand/32feet)
-  (NuGet `InTheHand.Net.Bluetooth` 4.1.40)
-  — pinned to 4.1.40, **do not upgrade to 4.1.44**: that release changed the
-  `BluetoothClient.DiscoverDevices` overloads and breaks the build
-- Device enumeration: WinRT `DeviceInformation.FindAllAsync` reads the system pairing
-  cache (~300 ms, no radio inquiry). 32feet's `DiscoverDevices` only has a single-parameter
-  overload and runs a full inquiry (10–20 s) every time, so it can't be used for the menu
-- Service UUID: `a3bd7f2e-5c14-4a9e-9d1b-2f6e8c04bde1`
-  (matches `TransferProtocol.SERVICE_UUID` on the phone)
-- Frame format: 11-byte header (MAGIC / version / type / FLAGS / length / CRC32 low 16 bits)
-  plus payload — see `Protocol.cs`, byte-for-byte aligned with `TransferProtocol.kt` on the
-  phone; files are chunked at 4 KB
-- Note: the SPP channel measures roughly 50–200 KB/s, so it suits text and files of a few MB
-
-## Source layout
-
-```
-BlueDeskRelay/
-  RelayApp.cs        Tray UI, hotkeys, clipboard, Connect Device menu
-  PhoneLink.cs       RFCOMM connect / send / receive / reconnect watchdog
-  Protocol.cs        Frame codec (byte-for-byte aligned with the phone)
-  PairedDevices.cs   Paired device enumeration (WinRT)
-  RelaySettings.cs   Remembered device address (%APPDATA%\BlueDesk\relay.json)
-```
+[Apache License 2.0](LICENSE)
