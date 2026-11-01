@@ -1,5 +1,7 @@
 # BlueDesk 互传助手（PC 端）
 
+**简体中文** | [English](README.en.md) | [日本語](README.ja.md) | [한국어](README.ko.md)
+
 配合手机端 BlueDesk「互传」页使用的 Windows 托盘程序。
 通过经典蓝牙 SPP 数据通道与手机通信，实现 **A 电脑 → 手机 → B 电脑** 的文本 / 小文件互传。
 
@@ -62,10 +64,10 @@ error NU1301: 本地源“d:\Program Files (x86)\Microsoft Visual Studio\Shared\
 `C:\Program Files (x86)\NuGet\Config\Microsoft.VisualStudio.FallbackLocation.config`
 里声明了一个指向 D 盘的 `fallbackPackageFolders`，而这台机器没有 D 盘。
 
-项目里已放好 `pc-companion/nuget.config`，在本目录下构建会自动清空继承的 fallback 目录，
+项目里已放好根目录的 `nuget.config`，在本目录下构建会自动清空继承的 fallback 目录，
 无需管理员权限、不改动系统配置。
 
-注意它**只对 `pc-companion` 目录下的工程生效**。在别处新建 .NET 工程仍会报同样的错，
+注意它**只对本仓库目录下的工程生效**。在别处新建 .NET 工程仍会报同样的错，
 那时要么把 `nuget.config` 复制过去，要么用管理员权限修正上面那个全局配置文件。
 
 ## 使用步骤
