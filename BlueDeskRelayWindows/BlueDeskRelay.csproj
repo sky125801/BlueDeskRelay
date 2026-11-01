@@ -10,7 +10,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>BlueDeskRelay</AssemblyName>
     <RootNamespace>BlueDeskRelay</RootNamespace>
-    <Version>1.0.0</Version>
+    <Version>0.0.1</Version>
     <ApplicationHighDpiMode>SystemAware</ApplicationHighDpiMode>
     <!-- 与 Android 端同风格的桌面 / 笔记本图标（橙色信号 + 米白设备） -->
     <ApplicationIcon>Assets\BlueDeskRelay.ico</ApplicationIcon>

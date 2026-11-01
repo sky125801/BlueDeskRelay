@@ -19,5 +19,9 @@ BlueDeskRelayWindows/obj/
 BlueDeskRelayWindows/**/bin/
 BlueDeskRelayWindows/**/obj/
 
+# ---- 发布产物 ----
+# 只保留最终安装包（dist/*.apk、dist/*.zip），中间解包目录不入库
+dist/win-publish/
+
 # ---- misc ----
 .workbuddy-ai/
