@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="bluedesk-icon.png" width="120" height="120" alt="BlueDesk アプリアイコン">
+  <img src="ic_launcher.png" width="120" height="120" alt="BlueDesk アプリアイコン">
 </p>
 
 <h1 align="center">BlueDesk</h1>
