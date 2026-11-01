@@ -1,6 +1,16 @@
-# BlueDesk 互传助手
+<p align="center">
+  <img src="icon.png" width="120" height="120" alt="BlueDesk 应用图标">
+</p>
 
-**简体中文** | [English](README.en.md) | [日本語](README.ja.md) | [한국어](README.ko.md)
+<h1 align="center">BlueDesk</h1>
+
+<p align="center">
+  <b>互传助手</b> · 三端辅助程序（Windows / Android / macOS）
+</p>
+
+<p align="center">
+  <b>简体中文</b> | <a href="README.en.md">English</a> | <a href="README.ja.md">日本語</a> | <a href="README.ko.md">한국어</a>
+</p>
 
 配合 BlueDesk 手机端「互传」页使用的三端辅助程序集合。
 通过经典蓝牙 SPP 数据通道与手机通信，让 **A 电脑 → 手机 → B 电脑** 的文本与小文件互传

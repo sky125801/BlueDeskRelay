@@ -1,6 +1,16 @@
-# BlueDesk Relay
+<p align="center">
+  <img src="icon.png" width="120" height="120" alt="BlueDesk app icon">
+</p>
 
-[简体中文](README.md) | **English** | [日本語](README.ja.md) | [한국어](README.ko.md)
+<h1 align="center">BlueDesk</h1>
+
+<p align="center">
+  <b>Relay Companion</b> · three-platform helper apps (Windows / Android / macOS)
+</p>
+
+<p align="center">
+  <a href="README.md">简体中文</a> | <b>English</b> | <a href="README.ja.md">日本語</a> | <a href="README.ko.md">한국어</a>
+</p>
 
 A set of companion apps for the **Relay** page of the BlueDesk mobile app, for three platforms.
 They talk to the phone over the classic Bluetooth SPP data channel, turning

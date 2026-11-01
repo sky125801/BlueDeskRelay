@@ -1,6 +1,16 @@
-# BlueDesk リレー
+<p align="center">
+  <img src="icon.png" width="120" height="120" alt="BlueDesk アプリアイコン">
+</p>
 
-[简体中文](README.md) | [English](README.en.md) | **日本語** | [한국어](README.ko.md)
+<h1 align="center">BlueDesk</h1>
+
+<p align="center">
+  <b>リレー</b> · 3 プラットフォーム向けコンパニオンアプリ（Windows / Android / macOS）
+</p>
+
+<p align="center">
+  <a href="README.md">简体中文</a> | <a href="README.en.md">English</a> | <b>日本語</b> | <a href="README.ko.md">한국어</a>
+</p>
 
 BlueDesk スマートフォンアプリの「リレー」ページと組み合わせて使う、3 プラットフォーム向けの
 コンパニオンアプリ群です。クラシック Bluetooth の SPP データチャネルでスマートフォンと通信し、

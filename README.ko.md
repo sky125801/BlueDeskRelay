@@ -1,6 +1,16 @@
-# BlueDesk 릴레이
+<p align="center">
+  <img src="icon.png" width="120" height="120" alt="BlueDesk 앱 아이콘">
+</p>
 
-[简体中文](README.md) | [English](README.en.md) | [日本語](README.ja.md) | **한국어**
+<h1 align="center">BlueDesk</h1>
+
+<p align="center">
+  <b>릴레이</b> · 3개 플랫폼용 보조 앱 (Windows / Android / macOS)
+</p>
+
+<p align="center">
+  <a href="README.md">简体中文</a> | <a href="README.en.md">English</a> | <a href="README.ja.md">日本語</a> | <b>한국어</b>
+</p>
 
 BlueDesk 스마트폰 앱의 '릴레이' 페이지와 함께 사용하는 3개 플랫폼용 보조 앱 모음입니다.
 클래식 블루투스 SPP 데이터 채널로 스마트폰과 통신하여
