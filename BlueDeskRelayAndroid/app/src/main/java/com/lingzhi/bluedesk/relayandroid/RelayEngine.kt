@@ -61,12 +61,12 @@ sealed interface ConnState {
     data class Error(val message: String) : ConnState
 }
 
-fun ConnState.describe(): String = when (this) {
-    ConnState.Idle -> "等待连接"
-    ConnState.BluetoothOff -> "蓝牙未开启"
-    ConnState.NoDevice -> "未找到已配对的 BlueDesk 手机"
-    is ConnState.Connecting -> "正在连接 $name…"
-    is ConnState.Connected -> "已连接 $name"
+fun ConnState.describe(context: Context): String = when (this) {
+    ConnState.Idle -> context.getString(R.string.state_idle)
+    ConnState.BluetoothOff -> context.getString(R.string.state_bluetooth_off)
+    ConnState.NoDevice -> context.getString(R.string.state_no_device)
+    is ConnState.Connecting -> context.getString(R.string.state_connecting, name)
+    is ConnState.Connected -> context.getString(R.string.state_connected, name)
     is ConnState.Error -> message
 }
 
@@ -297,18 +297,18 @@ object RelayEngine {
                 try {
                     val meta = queryMeta(uri)
                     if (!withinLimit(meta.size)) {
-                        emitMessage("${meta.name} 超过传输上限（${limitLabel()}），未发送")
+                        emitMessage(app.getString(R.string.msg_exceeds_limit, meta.name, limitLabel()))
                         continue
                     }
                     val cached = copyToCache(uri, meta.name)
                     if (cached == null) {
-                        emitMessage("无法读取 ${meta.name}")
-                        continue
+                        emitMessage(app.getString(R.string.msg_cannot_read_file, meta.name))
+                        continue;
                     }
                     if (!withinLimit(cached.length())) {
                         cached.delete()
-                        emitMessage("${meta.name} 超过传输上限（${limitLabel()}），未发送")
-                        continue
+                        emitMessage(app.getString(R.string.msg_exceeds_limit, meta.name, limitLabel()))
+                        continue;
                     }
                     val id = newId()
                     addRecord(
@@ -320,7 +320,7 @@ object RelayEngine {
                     outgoing.send(Outgoing.FileTask(cached, meta.name, id))
                 } catch (e: Exception) {
                     Log.w(TAG, "读取待发送文件失败", e)
-                    emitMessage("读取文件失败：${e.message ?: "未知错误"}")
+                    emitMessage(app.getString(R.string.msg_read_file_failed, e.message ?: app.getString(R.string.msg_unknown_error)))
                 }
             }
         }
@@ -337,37 +337,37 @@ object RelayEngine {
             try {
                 val root = DocumentFile.fromTreeUri(app, treeUri)
                 if (root == null || !root.canRead()) {
-                    emitMessage("无法读取所选文件夹")
+                    emitMessage(app.getString(R.string.msg_cannot_read_folder))
                     return@launch
                 }
                 val files = mutableListOf<TreeEntry>()
                 val dirs = mutableListOf<String>()
                 collectTree(root, "", files, dirs)
                 if (files.isEmpty() && dirs.isEmpty()) {
-                    emitMessage("所选文件夹为空，未发送")
+                    emitMessage(app.getString(R.string.msg_folder_empty))
                     return@launch
                 }
                 // SAF 可能返回 -1（大小未知），声明总量只统计已知大小；
                 // 未知部分由发送时的累计字节数与手机端累计校验兜底。
                 val total = files.sumOf { if (it.size >= 0L) it.size else 0L }
                 if (!withinLimit(total)) {
-                    emitMessage("文件夹超过传输上限（${limitLabel()}），未发送")
+                    emitMessage(app.getString(R.string.msg_folder_exceeds_limit, limitLabel()))
                     return@launch
                 }
-                val rawName = root.name?.takeIf { it.isNotBlank() } ?: "文件夹"
+                val rawName = root.name?.takeIf { it.isNotBlank() } ?: app.getString(R.string.folder_default_name)
                 val name = sanitizeName(rawName)
                 val id = newId()
                 addRecord(
                     RelayRecord(
                         id = id, inbound = false, isFile = true,
-                        title = "文件夹 $name（${files.size} 个文件）",
+                        title = app.getString(R.string.folder_record_title, name, files.size),
                         size = total, status = RecordStatus.QUEUED
                     )
                 )
                 outgoing.send(Outgoing.TreeTask(id, name, files, dirs, total))
             } catch (e: Exception) {
                 Log.w(TAG, "读取待发送文件夹失败", e)
-                emitMessage("读取文件夹失败：${e.message ?: "未知错误"}")
+                emitMessage(app.getString(R.string.msg_read_folder_failed, e.message ?: app.getString(R.string.msg_unknown_error)))
             }
         }
     }
@@ -423,11 +423,11 @@ object RelayEngine {
     private suspend fun connectOnce() = withContext(Dispatchers.IO) {
         val adapter = bluetoothAdapter()
         if (adapter == null) {
-            _state.value = ConnState.Error("这台设备不支持蓝牙")
+            _state.value = ConnState.Error(app.getString(R.string.state_error_bluetooth_unsupported))
             return@withContext
         }
         if (!hasConnectPermission()) {
-            _state.value = ConnState.Error("缺少「附近的设备」权限")
+            _state.value = ConnState.Error(app.getString(R.string.state_error_no_permission))
             return@withContext
         }
         if (!runCatching { adapter.isEnabled }.getOrDefault(false)) {
@@ -460,7 +460,7 @@ object RelayEngine {
             if (!connected) {
                 runCatching { s.close() }
                 attempt.cancel()
-                throw IOException("无法连接，请确认手机端已开启互传服务")
+                throw IOException(app.getString(R.string.state_connect_failed))
             }
 
             pendingSocket = null
@@ -559,7 +559,7 @@ object RelayEngine {
                 } else {
                     val name = assembler.name
                     if (assembler.overflow) {
-                        emitMessage("$name 超过传输上限（${limitLabel()}），已忽略")
+                        emitMessage(app.getString(R.string.msg_file_exceeds_limit_ignored, name, limitLabel()))
                     } else {
                         val mime = mimeOf(name)
                         val saved = saveDownload(name, assembler.bytes())
@@ -573,7 +573,7 @@ object RelayEngine {
                             )
                             Notifier.receivedFile(app, name, saved, mime)
                         } else {
-                            emitMessage("文件保存失败：$name")
+                            emitMessage(app.getString(R.string.msg_file_save_failed, name))
                         }
                     }
                     assembler.clear()
@@ -589,7 +589,7 @@ object RelayEngine {
             RelayProtocol.FrameType.PING -> sendFrame(RelayProtocol.pong())
 
             RelayProtocol.FrameType.ERROR -> {
-                emitMessage("手机端提示：${String(frame.payload, Charsets.UTF_8)}")
+                emitMessage(app.getString(R.string.msg_phone_error, String(frame.payload, Charsets.UTF_8)))
             }
         }
     }
@@ -601,10 +601,10 @@ object RelayEngine {
     ) {
         val json = runCatching { JSONObject(String(frame.payload, Charsets.UTF_8)) }.getOrNull()
         if (json == null) {
-            emitMessage("批次信息无法解析")
+            emitMessage(app.getString(R.string.msg_batch_parse_error))
             return
         }
-        val rawName = json.optString("name", "文件夹").ifBlank { "文件夹" }
+        val rawName = json.optString("name", app.getString(R.string.folder_default_name)).ifBlank { app.getString(R.string.folder_default_name) }
         val dirs = json.optJSONArray("dirs")?.let { array ->
             (0 until array.length()).mapNotNull { i ->
                 array.optString(i).takeIf { it.isNotBlank() }
@@ -622,8 +622,8 @@ object RelayEngine {
         val limit = _transferLimit.value
         if (limit > 0L && batch.declaredBytes > limit) {
             batch.rejected = true
-            emitMessage("文件夹 $rawName 超过传输上限（${limitLabel()}），已丢弃")
-            sendFrame(RelayProtocol.error("文件夹超过传输上限"))
+            emitMessage(app.getString(R.string.msg_folder_exceeds_limit, rawName))
+            sendFrame(RelayProtocol.error(app.getString(R.string.msg_folder_exceeds_limit, limitLabel())))
         }
     }
 
@@ -635,7 +635,7 @@ object RelayEngine {
         val json = runCatching { JSONObject(String(frame.payload, Charsets.UTF_8)) }.getOrNull()
         if (json == null) {
             batch.strayFile = true
-            emitMessage("批次文件信息无法解析")
+            emitMessage(app.getString(R.string.msg_batch_file_parse_error))
             return
         }
         batch.strayFile = false
@@ -648,21 +648,21 @@ object RelayEngine {
         val batchId = json.optString("batch", "")
         if (batchId.isNotEmpty() && batchId != batch.id) {
             batch.strayFile = true
-            emitMessage("批次 id 不匹配，已忽略 $path")
+            emitMessage(app.getString(R.string.msg_batch_id_mismatch, path))
             return
         }
 
         val limit = _transferLimit.value
         if (size > 0L && !withinLimit(size)) {
             batch.rejected = true
-            emitMessage("文件超过传输上限（${limitLabel()}），批次已丢弃")
-            sendFrame(RelayProtocol.error("文件超过传输上限"))
+            emitMessage(app.getString(R.string.msg_file_exceeds_limit_batch, limitLabel()))
+            sendFrame(RelayProtocol.error(app.getString(R.string.msg_file_exceeds_limit_batch, limitLabel())))
             return
         }
         if (limit > 0L && size > 0L && batch.receivedBytes + size > limit) {
             batch.rejected = true
-            emitMessage("文件夹超过传输上限（${limitLabel()}），批次已丢弃")
-            sendFrame(RelayProtocol.error("文件夹超过传输上限"))
+            emitMessage(app.getString(R.string.msg_folder_exceeds_limit_batch, limitLabel()))
+            sendFrame(RelayProtocol.error(app.getString(R.string.msg_folder_exceeds_limit_batch, limitLabel())))
             return
         }
 
@@ -681,16 +681,16 @@ object RelayEngine {
         }
         if (assembler.overflow) {
             batch.rejected = true
-            emitMessage("文件超过传输上限（${limitLabel()}），批次已丢弃")
-            sendFrame(RelayProtocol.error("文件超过传输上限"))
+            emitMessage(app.getString(R.string.msg_file_exceeds_limit_batch, limitLabel()))
+            sendFrame(RelayProtocol.error(app.getString(R.string.msg_file_exceeds_limit_batch, limitLabel())))
             assembler.clear()
             return
         }
         val limit = _transferLimit.value
         if (limit > 0L && batch.receivedBytes + assembler.received > limit) {
             batch.rejected = true
-            emitMessage("文件夹超过传输上限（${limitLabel()}），批次已丢弃")
-            sendFrame(RelayProtocol.error("文件夹超过传输上限"))
+            emitMessage(app.getString(R.string.msg_folder_exceeds_limit_batch, limitLabel()))
+            sendFrame(RelayProtocol.error(app.getString(R.string.msg_folder_exceeds_limit_batch, limitLabel())))
             assembler.clear()
             return
         }
@@ -702,7 +702,7 @@ object RelayEngine {
             batch.receivedFiles += 1
             if (batch.firstUri == null) batch.firstUri = saved
         } else {
-            emitMessage("文件保存失败：${assembler.name}")
+            emitMessage(app.getString(R.string.msg_file_save_failed, assembler.name))
         }
         assembler.clear()
     }
@@ -714,14 +714,14 @@ object RelayEngine {
             addRecord(
                 RelayRecord(
                     id = newId(), inbound = true, isFile = true,
-                    title = "文件夹 ${batch.name}（$count 个文件）",
+                    title = app.getString(R.string.folder_record_title, batch.name, count),
                     uri = batch.firstUri, size = batch.receivedBytes,
                     status = RecordStatus.RECEIVED
                 )
             )
             Notifier.receivedFolder(app, batch.name, count, batch.firstUri)
         } else {
-            emitMessage("文件夹 ${batch.name} 已丢弃")
+            emitMessage(app.getString(R.string.msg_folder_discarded, batch.name))
         }
         batch.reset()
     }
@@ -752,7 +752,7 @@ object RelayEngine {
             updateRecord(task.recordId) { it.copy(status = RecordStatus.SENT) }
         } catch (e: Exception) {
             updateRecord(task.recordId) { it.copy(status = RecordStatus.FAILED) }
-            emitMessage("发送失败：${e.message ?: "连接已断开"}")
+            emitMessage(app.getString(R.string.msg_send_failed, e.message ?: app.getString(R.string.msg_send_connection_closed)))
         }
     }
 
@@ -777,7 +777,7 @@ object RelayEngine {
                 updateRecord(task.recordId) { it.copy(status = RecordStatus.SENT) }
             } catch (e: Exception) {
                 updateRecord(task.recordId) { it.copy(status = RecordStatus.FAILED) }
-                emitMessage("文件发送失败：${task.name}")
+                emitMessage(app.getString(R.string.msg_file_send_failed, task.name))
                 Log.w(TAG, "发送文件失败", e)
             } finally {
                 runCatching { task.file.delete() }
@@ -828,14 +828,15 @@ object RelayEngine {
                 updateRecord(task.recordId) { it.copy(status = RecordStatus.SENT) }
             } catch (e: Exception) {
                 updateRecord(task.recordId) { it.copy(status = RecordStatus.FAILED) }
-                emitMessage("文件夹发送失败：${task.name}")
+                emitMessage(app.getString(R.string.msg_folder_send_failed, task.name))
                 Log.w(TAG, "发送文件夹失败", e)
             }
         }
     }
 
     private suspend fun sendFrame(frame: RelayProtocol.Frame) {
-        val out = output ?: throw IOException("未连接")
+        // 这条消息会被 deliverText 拼进 msg_send_failed 直接展示，必须本地化
+        val out = output ?: throw IOException(app.getString(R.string.error_not_connected))
         writeMutex.withLock { RelayProtocol.write(out, frame) }
     }
 
@@ -866,9 +867,9 @@ object RelayEngine {
         (Build.MODEL?.takeIf { it.isNotBlank() } ?: "Android").let { "Android $it" }
 
     private fun friendlyError(e: Exception): String = when (e) {
-        is SecurityException -> "缺少蓝牙权限"
-        is IOException -> e.message ?: "连接失败"
-        else -> e.message ?: "连接失败（${e.javaClass.simpleName}）"
+        is SecurityException -> app.getString(R.string.state_error_no_bluetooth_permission)
+        is IOException -> e.message ?: app.getString(R.string.error_connection_failed)
+        else -> e.message ?: app.getString(R.string.error_connection_failed)
     }
 
     private fun closeSocket() {
@@ -1062,7 +1063,7 @@ object RelayEngine {
 
     private fun limitLabel(): String {
         val limit = _transferLimit.value
-        if (limit <= 0L) return "不限"
+        if (limit <= 0L) return app.getString(R.string.limit_unlimited)
         val mb = 1024L * 1024L
         return when {
             limit >= mb && limit % mb == 0L -> "${limit / mb} MB"

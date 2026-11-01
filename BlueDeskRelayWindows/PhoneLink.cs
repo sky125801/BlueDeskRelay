@@ -343,7 +343,7 @@ public sealed class PhoneLink : IDisposable
                 }
                 if (max < 0) max = 0;
                 RelaySettings.SaveMaxBytes(max);
-                RelayLog.Write($"手机下发传输上限：{(max == 0 ? "不限" : $"{max} B")}");
+                RelayLog.Write($"手机下发传输上限：{(max == 0 ? Strings.Unlimited : $"{max} B")}");
                 MaxBytesChanged?.Invoke(max);
                 if (frame.NeedAck) await SendAsync(Protocol.Ack(frame.Type), ct);
                 break;
@@ -377,7 +377,7 @@ public sealed class PhoneLink : IDisposable
                     _batch = new BatchReceiver
                     {
                         Id = id,
-                        Folder = UniqueFolderName(SanitizeSegment(folder ?? "文件夹")),
+                        Folder = UniqueFolderName(SanitizeSegment(folder ?? Strings.DefaultFolderName)),
                         Dirs = dirs,
                     };
                     _pendingRelativePath = null;
@@ -536,7 +536,7 @@ public sealed class PhoneLink : IDisposable
     /// <summary>发送文本到手机（手机 UI 会收到一条记录，可一键转发给另一台 PC）</summary>
     public async Task SendTextAsync(string content)
     {
-        if (!IsConnected) throw new IOException("手机未连接");
+        if (!IsConnected) throw new IOException(Strings.NotConnected);
         await _sequenceLock.WaitAsync(CancellationToken.None);
         try
         {
@@ -551,7 +551,7 @@ public sealed class PhoneLink : IDisposable
     /// <summary>发送文件到手机</summary>
     public async Task SendFileAsync(string path)
     {
-        if (!IsConnected) throw new IOException("手机未连接");
+        if (!IsConnected) throw new IOException(Strings.NotConnected);
         var bytes = await File.ReadAllBytesAsync(path);
         var name = Path.GetFileName(path);
         var meta = System.Text.Json.JsonSerializer.Serialize(
@@ -587,8 +587,8 @@ public sealed class PhoneLink : IDisposable
     /// </summary>
     public async Task<FolderSendResult> SendFolderAsync(string folderPath, CancellationToken ct = default)
     {
-        if (!IsConnected) throw new IOException("手机未连接");
-        if (!Directory.Exists(folderPath)) throw new IOException("文件夹不存在");
+        if (!IsConnected) throw new IOException(Strings.NotConnected);
+        if (!Directory.Exists(folderPath)) throw new IOException("Folder does not exist");
 
         var root = new DirectoryInfo(folderPath);
         var folderName = SanitizeSegment(root.Name);
@@ -600,7 +600,7 @@ public sealed class PhoneLink : IDisposable
         var max = RelaySettings.LoadMaxBytes();
         if (max > 0 && totalBytes > max)
             throw new IOException(
-                $"文件夹共 {FormatSize(totalBytes)}，超过传输上限 {FormatSize(max)}，已取消发送");
+                $"Folder {Strings.FormatSize(totalBytes)} exceeds transfer limit {Strings.FormatSize(max)}");
 
         var id = Guid.NewGuid().ToString("N")[..8];
 
@@ -797,7 +797,7 @@ public sealed class PhoneLink : IDisposable
 
     private async Task SendAsync(Protocol.Frame frame, CancellationToken ct)
     {
-        var stream = _stream ?? throw new IOException("连接未建立");
+        var stream = _stream ?? throw new IOException("Connection not established");
         await _sendLock.WaitAsync(ct);
         try
         {

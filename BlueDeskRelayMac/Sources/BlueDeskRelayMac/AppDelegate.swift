@@ -40,52 +40,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // 菜单
         let menu = NSMenu()
-        statusMenuItem = NSMenuItem(title: "未连接（自动重连中）", action: nil, keyEquivalent: "")
+        statusMenuItem = NSMenuItem(title: L10n.t("status.notConnected"), action: nil, keyEquivalent: "")
         statusMenuItem.isEnabled = false
         menu.addItem(statusMenuItem)
         menu.addItem(.separator())
 
         // 手动连接：展开时动态列出已配对设备
-        let connectSub = NSMenu(title: "连接设备")
+        let connectSub = NSMenu(title: L10n.t("menu.connectDevice"))
         connectSub.delegate = self
-        let connectItem = NSMenuItem(title: "连接设备", action: nil, keyEquivalent: "")
+        let connectItem = NSMenuItem(title: L10n.t("menu.connectDevice"), action: nil, keyEquivalent: "")
         connectItem.submenu = connectSub
         connectSubmenu = connectSub
         menu.addItem(connectItem)
 
-        disconnectItem = NSMenuItem(title: "断开连接", action: #selector(disconnectPhone), keyEquivalent: "")
+        disconnectItem = NSMenuItem(title: L10n.t("menu.disconnect"), action: #selector(disconnectPhone), keyEquivalent: "")
         disconnectItem.target = self
         disconnectItem.isEnabled = false
         menu.addItem(disconnectItem)
         menu.addItem(.separator())
 
-        sendClipItem = NSMenuItem(title: "发送剪贴板内容 (Ctrl+Opt+B)",
+        sendClipItem = NSMenuItem(title: L10n.t("menu.sendClipboard"),
                                   action: #selector(sendClipboard), keyEquivalent: "")
         sendClipItem.target = self
         sendClipItem.isEnabled = false
         menu.addItem(sendClipItem)
 
-        sendFileItem = NSMenuItem(title: "发送文件…", action: #selector(sendFile), keyEquivalent: "")
+        sendFileItem = NSMenuItem(title: L10n.t("menu.sendFile"), action: #selector(sendFile), keyEquivalent: "")
         sendFileItem.target = self
         sendFileItem.isEnabled = false
         menu.addItem(sendFileItem)
 
         // 与 Windows 端 Ctrl+Alt+F 对位：Finder 里选中文件后直接发
-        sendSelectedItem = NSMenuItem(title: "发送 Finder 选中的文件 (Ctrl+Opt+F)",
+        sendSelectedItem = NSMenuItem(title: L10n.t("menu.sendFinderSelection"),
                                       action: #selector(sendFinderSelection), keyEquivalent: "")
         sendSelectedItem.target = self
         sendSelectedItem.isEnabled = false
         menu.addItem(sendSelectedItem)
 
         menu.addItem(.separator())
-        let quit = NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quit = NSMenuItem(title: L10n.t("menu.quit"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
         menu.autoenablesItems = false
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.menu = menu
         statusItem.button?.image = NSImage(systemSymbolName: "arrow.left.arrow.right",
-                                           accessibilityDescription: "BlueDesk 互传助手")
+                                           accessibilityDescription: L10n.t("app.name"))
 
         // Finder 右键「服务」菜单的接收方（对应 Windows 资源管理器右键菜单）
         NSApp.servicesProvider = self
@@ -101,10 +101,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.receiveText(text)
         }
         link.onFile = { [weak self] path, size in
-            self?.notify("收到文件", "\(FileManager.default.displayName(atPath: path))（\(formatSize(size))）已保存到 Downloads/BlueDesk")
+            self?.notify(L10n.t("file.received"),
+                         L10n.t("file.receivedBody",
+                                FileManager.default.displayName(atPath: path), formatSize(size)))
         }
         link.onError = { [weak self] message in
-            self?.notify("BlueDesk 互传助手", message)
+            self?.notify(L10n.t("app.name"), message)
         }
 
         // 自动连接 + 断线重连
@@ -164,20 +166,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             hotKeyRefs.append(ref)
         } else {
             let name = id == .clipboard ? "Ctrl+Opt+B" : "Ctrl+Opt+F"
-            notify("热键注册失败", "\(name) 可能被其他程序占用，请改用菜单发送")
+            notify(L10n.t("hotkey.failed"), L10n.t("hotkey.occupied", name))
         }
     }
 
     // MARK: - 状态
 
     private func updateStatus(connected: Bool, name: String) {
-        statusMenuItem.title = connected ? "已连接 \(name)" : "未连接（自动重连中）"
+        statusMenuItem.title = connected ? L10n.t("status.connected", name) : L10n.t("status.notConnected")
         sendClipItem.isEnabled = connected
         sendFileItem.isEnabled = connected
         sendSelectedItem.isEnabled = connected
         disconnectItem.isEnabled = connected
         if connected {
-            notify("BlueDesk 互传助手", "已连接 \(name)")
+            notify(L10n.t("app.name"), L10n.t("status.connected", name))
 
             // 右键 / 快捷键送来的文件可能在连接前就排队了，这里补发
             if !pendingFiles.isEmpty {
@@ -186,7 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 for url in queued { sendFileURL(url) }
             }
         } else {
-            notify("BlueDesk 互传助手", "手机连接已断开")
+            notify(L10n.t("app.name"), L10n.t("status.phoneDisconnected"))
         }
     }
 
@@ -207,7 +209,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let devices = link.pairedDeviceList()
         if devices.isEmpty {
-            let hint = NSMenuItem(title: "无已配对设备（先在系统设置→蓝牙配对）",
+            let hint = NSMenuItem(title: L10n.t("connect.noDevices"),
                                   action: nil, keyEquivalent: "")
             hint.isEnabled = false
             sub.addItem(hint)
@@ -226,13 +228,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 item.state = .on
             } else if device.address == preferred && !link.isConnected {
                 // 记忆设备：用符号标注而非打勾（打勾保留给「正在连接」）
-                item.title = "★ \(device.name)（记忆）"
+                item.title = L10n.t("connect.preferred", device.name)
             }
             sub.addItem(item)
         }
 
         sub.addItem(.separator())
-        let reset = NSMenuItem(title: "清除记忆（恢复自动发现 BlueDesk*）",
+        let reset = NSMenuItem(title: L10n.t("connect.clearPreferred"),
                                action: #selector(clearPreferredDevice), keyEquivalent: "")
         reset.target = self
         sub.addItem(reset)
@@ -243,16 +245,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // 先断开当前连接再切目标
         if link.isConnected { link.disconnect() }
         guard let device = link.pairedDevice(at: address) else {
-            notify("连接失败", "设备可能已取消配对")
+            notify(L10n.t("connect.failed"), L10n.t("connect.deviceUnpaired"))
             return
         }
-        notify("连接中", "正在连接「\(device.name ?? address)」…")
+        notify(L10n.t("connect.connecting"), L10n.t("connect.connectingFormat", device.name ?? address))
         link.connect(to: device)
     }
 
     @objc private func clearPreferredDevice() {
         link.clearPreferred()
-        notify("已清除记忆", "下次将自动连接第一台 BlueDesk 手机")
+        notify(L10n.t("preferred.cleared"), L10n.t("preferred.clearedBody"))
     }
 
     @objc private func disconnectPhone() {
@@ -263,25 +265,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func sendClipboard() {
         guard link.isConnected else {
-            notify("未连接", "正在连接手机，稍后重试")
+            notify(L10n.t("error.notConnected"), L10n.t("error.tryAgain"))
             return
         }
         let text = NSPasteboard.general.string(forType: .string) ?? ""
         if text.isEmpty {
-            notify("剪贴板为空", "先复制一段文字再发送")
+            notify(L10n.t("clipboard.empty"), L10n.t("clipboard.emptyHint"))
             return
         }
         link.sendText(text)
-        notify("已发送", "\(text.count) 字符已交给手机")
+        notify(L10n.t("send.sent"), L10n.t("send.sentBody", text.count))
     }
 
     @objc private func sendFile() {
         guard link.isConnected else {
-            notify("未连接", "正在连接手机，稍后重试")
+            notify(L10n.t("error.notConnected"), L10n.t("error.tryAgain"))
             return
         }
         let panel = NSOpenPanel()
-        panel.title = "选择要发送的文件"
+        panel.title = L10n.t("file.select")
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
@@ -290,10 +292,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self, response == .OK, let url = panel.url else { return }
             let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int ?? 0
             if size > 64 * 1024 * 1024 {
-                self.notify("文件过大", "单文件上限 64 MB")
+                self.notify(L10n.t("file.tooLarge"), L10n.t("file.tooLargeLimit"))
                 return
             }
-            self.notify("发送中", "\(url.lastPathComponent) 传输中…")
+            self.notify(L10n.t("send.sending"), L10n.t("send.sendingBody", url.lastPathComponent))
             self.link.sendFile(at: url)
         }
     }
@@ -306,7 +308,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                    error: AutoreleasingUnsafeMutablePointer<NSString>) {
         let urls = fileURLs(from: pboard)
         guard !urls.isEmpty else {
-            error.pointee = "没有可发送的文件" as NSString
+            error.pointee = L10n.t("service.noFiles") as NSString
             return
         }
         sendURLs(urls)
@@ -319,8 +321,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if urls.isEmpty { urls = fileURLs(from: NSPasteboard.general) }
 
         guard !urls.isEmpty else {
-            notify("没有选中文件",
-                   "先在 Finder 里选中文件再按 Ctrl+Opt+F；也可以 Cmd+C 复制文件后按")
+            notify(L10n.t("noFileSelected"), L10n.t("noFileSelected.hint"))
             return
         }
         sendURLs(urls)
@@ -329,7 +330,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func sendURLs(_ urls: [URL]) {
         guard link.isConnected else {
             pendingFiles.append(contentsOf: urls)
-            notify("等待连接", "\(urls.count) 个文件已排队，连上手机后自动发送")
+            notify(L10n.t("waiting"), L10n.t("waiting.format", urls.count))
             return
         }
         for url in urls { sendFileURL(url) }
@@ -338,10 +339,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func sendFileURL(_ url: URL) {
         let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int ?? 0
         if size > 64 * 1024 * 1024 {
-            notify("文件过大", "\(url.lastPathComponent) 超过单文件上限 64 MB")
+            notify(L10n.t("file.tooLarge"), L10n.t("file.tooLargeFormat", url.lastPathComponent))
             return
         }
-        notify("发送中", "\(url.lastPathComponent) 传输中…")
+        notify(L10n.t("send.sending"), L10n.t("send.sendingBody", url.lastPathComponent))
         link.sendFile(at: url)
     }
 
@@ -385,7 +386,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func receiveText(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
-        notify("收到文本", "已写入剪贴板（\(text.count) 字符），可直接 Cmd+V")
+        notify(L10n.t("text.received"), L10n.t("text.receivedBody", text.count))
     }
 
     private func notify(_ title: String, _ body: String) {

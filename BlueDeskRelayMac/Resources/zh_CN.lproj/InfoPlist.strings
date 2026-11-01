@@ -1,0 +1,14 @@
+/* BlueDesk 互传助手 — 简体中文（基准语言）
+   仅覆盖系统级文案：权限授权提示、应用显示名。
+   菜单栏 UI 文案见 Sources/BlueDeskRelayMac/Localization.swift */
+
+"CFBundleDisplayName" = "BlueDesk 互传助手";
+
+"NSBluetoothAlwaysUsageDescription" =
+    "BlueDesk 互传助手需要通过蓝牙与 BlueDesk 手机交换剪贴板与文件。";
+
+"NSUserNotificationsUsageDescription" =
+    "用于提示收发进度与连接状态。";
+
+"NSAppleEventsUsageDescription" =
+    "需要读取 Finder 中选中的文件，以便按快捷键直接发送给手机。";

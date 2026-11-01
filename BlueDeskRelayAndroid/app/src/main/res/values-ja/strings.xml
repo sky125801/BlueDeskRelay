@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">BlueDesk Relay</string>
+
+    <!-- Notification channels -->
+    <string name="channel_connection">リレー接続</string>
+    <string name="channel_connection_desc">BlueDeskスマートフォンとのBluetooth接続を維持</string>
+    <string name="channel_received">受信内容</string>
+    <string name="channel_received_desc">テキストやファイルの受信時に通知</string>
+
+    <!-- Notification titles -->
+    <string name="notif_received_text">テキスト受信</string>
+    <string name="notif_received_file">ファイル受信</string>
+    <string name="notif_received_folder">フォルダ受信</string>
+
+    <!-- Connection states -->
+    <string name="state_idle">接続待機中</string>
+    <string name="state_bluetooth_off">Bluetoothがオフです</string>
+    <string name="state_no_device">ペアリング済みのBlueDeskスマートフォンが見つかりません</string>
+    <string name="state_connecting">%1$sに接続中…</string>
+    <string name="state_connected">%1$sに接続済み</string>
+    <string name="state_error_bluetooth_unsupported">このデバイスはBluetoothに対応していません</string>
+    <string name="state_error_no_permission">「付近のデバイス」権限がありません</string>
+    <string name="state_error_no_bluetooth_permission">Bluetooth権限がありません</string>
+    <string name="state_connect_failed">接続できません。スマートフォン側でリレーサービスが有効になっているか確認してください。</string>
+
+    <!-- Connection status labels -->
+    <string name="status_idle">待機中</string>
+    <string name="status_bluetooth_off">Bluetoothオフ</string>
+    <string name="status_no_device">ペアリングなし</string>
+    <string name="status_connecting">接続中</string>
+    <string name="status_connected">接続済み</string>
+    <string name="status_error">接続エラー</string>
+
+    <!-- Record status labels -->
+    <string name="record_queued">待機中</string>
+    <string name="record_sending">送信中</string>
+    <string name="record_sent">送信済み</string>
+    <string name="record_received">受信済み</string>
+    <string name="record_failed">失敗</string>
+
+    <!-- Record type labels -->
+    <string name="record_inbound">受信</string>
+    <string name="record_outbound">送信</string>
+    <string name="record_type_file">ファイル</string>
+    <string name="record_type_text">テキスト</string>
+
+    <!-- Header -->
+    <string name="header_subtitle">スマホリレー · Bluetooth直通</string>
+
+    <!-- Connection card -->
+    <string name="label_connection_status">接続ステータス</string>
+    <string name="label_paired_devices">ペアリング済みのBlueDeskスマートフォン</string>
+    <string name="label_transfer_limit">転送上限：%1$s（スマホで設定）</string>
+    <string name="label_no_paired_devices">ペアリング済みのスマートフォンが見つかりません。システムのBluetooth設定でペアリングしてください（デバイス名がBlueDeskで始まるもの）。</string>
+    <string name="label_background_service">バックグラウンド常駐</string>
+    <string name="label_background_service_desc">通知バー常駐、起動時に自動接続</string>
+    <string name="label_device_connected">接続済み</string>
+    <string name="label_device_connect">接続</string>
+
+    <!-- Buttons -->
+    <string name="btn_connect">接続</string>
+    <string name="btn_disconnect">切断</string>
+    <string name="btn_reconnect">再接続</string>
+    <string name="btn_send">送信</string>
+    <string name="btn_send_files">ファイル送信</string>
+    <string name="btn_send_folder">フォルダ送信</string>
+    <string name="btn_paste_and_send">クリップボードを貼り付けて送信</string>
+
+    <!-- Send card -->
+    <string name="send_card_title">スマホリレーへ送信</string>
+    <string name="send_text_placeholder">テキストを入力…</string>
+
+    <!-- Records section -->
+    <string name="records_title">送受信履歴</string>
+    <string name="records_empty">記録がありません。接続後、受信したテキストとファイルがここに表示されます。</string>
+
+    <!-- Messages / Snackbars -->
+    <string name="msg_queued">送信待ちに追加しました</string>
+    <string name="msg_exceeds_limit">%1$sが転送上限（%2$s）を超えています。送信されません</string>
+    <string name="msg_cannot_read_file">%1$sを読み込めません</string>
+    <string name="msg_read_file_failed">ファイルの読み込みに失敗：%1$s</string>
+    <string name="msg_read_folder_failed">フォルダの読み込みに失敗：%1$s</string>
+    <string name="msg_cannot_read_folder">選択したフォルダを読み込めません</string>
+    <string name="msg_folder_empty">選択したフォルダは空です。送信されません</string>
+    <string name="msg_folder_exceeds_limit">フォルダが転送上限（%1$s）を超えています。送信されません</string>
+    <string name="msg_send_failed">送信失敗：%1$s</string>
+    <string name="msg_send_connection_closed">接続が切断されました</string>
+    <string name="msg_file_send_failed">ファイル送信失敗：%1$s</string>
+    <string name="msg_folder_send_failed">フォルダ送信失敗：%1$s</string>
+    <string name="msg_file_save_failed">ファイルの保存に失敗：%1$s</string>
+    <string name="msg_file_exceeds_limit_ignored">%1$sが転送上限（%2$s）を超えています。無視されました</string>
+    <string name="msg_phone_error">スマホからの通知：%1$s</string>
+    <string name="msg_batch_parse_error">バッチ情報を解析できません</string>
+    <string name="msg_batch_file_parse_error">バッチファイル情報を解析できません</string>
+    <string name="msg_batch_id_mismatch">バッチIDが一致しません。%1$sをスキップしました</string>
+    <string name="msg_file_exceeds_limit_batch">ファイルが転送上限（%1$s）を超えています。バッチは破棄されました</string>
+    <string name="msg_folder_exceeds_limit_batch">フォルダが転送上限（%1$s）を超えています。バッチは破棄されました</string>
+    <string name="msg_folder_discarded">フォルダ%1$sは破棄されました</string>
+    <string name="msg_unknown_error">不明なエラー</string>
+
+    <!-- Folder labels -->
+    <string name="folder_default_name">フォルダ</string>
+    <string name="folder_record_title">フォルダ%1$s（%2$d個のファイル）</string>
+    <string name="folder_notif_text">%1$s（%2$d個のファイル）</string>
+
+    <!-- Transfer limit -->
+    <string name="limit_unlimited">無制限</string>
+
+    <!-- Errors -->
+    <string name="error_not_connected">未接続</string>
+    <string name="error_connection_failed">接続失敗</string>
+</resources>

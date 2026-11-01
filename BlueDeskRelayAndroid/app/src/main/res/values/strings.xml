@@ -1,8 +1,113 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">BlueDesk Relay</string>
-    <string name="channel_connection">中转连接</string>
-    <string name="channel_connection_desc">保持与 BlueDesk 手机的蓝牙连接</string>
-    <string name="channel_received">接收内容</string>
-    <string name="channel_received_desc">收到文字或文件时提醒</string>
+
+    <!-- Notification channels -->
+    <string name="channel_connection">Relay Connection</string>
+    <string name="channel_connection_desc">Maintains Bluetooth connection with BlueDesk phone</string>
+    <string name="channel_received">Received Content</string>
+    <string name="channel_received_desc">Notifies when text or files are received</string>
+
+    <!-- Notification titles -->
+    <string name="notif_received_text">Text Received</string>
+    <string name="notif_received_file">File Received</string>
+    <string name="notif_received_folder">Folder Received</string>
+
+    <!-- Connection states -->
+    <string name="state_idle">Waiting to connect</string>
+    <string name="state_bluetooth_off">Bluetooth is off</string>
+    <string name="state_no_device">No paired BlueDesk phone found</string>
+    <string name="state_connecting">Connecting to %1$s…</string>
+    <string name="state_connected">Connected to %1$s</string>
+    <string name="state_error_bluetooth_unsupported">This device does not support Bluetooth</string>
+    <string name="state_error_no_permission">Missing "Nearby devices" permission</string>
+    <string name="state_error_no_bluetooth_permission">Missing Bluetooth permission</string>
+    <string name="state_connect_failed">Unable to connect. Make sure the relay service is enabled on your phone.</string>
+
+    <!-- Connection status labels -->
+    <string name="status_idle">Idle</string>
+    <string name="status_bluetooth_off">Bluetooth off</string>
+    <string name="status_no_device">No paired device</string>
+    <string name="status_connecting">Connecting</string>
+    <string name="status_connected">Connected</string>
+    <string name="status_error">Connection error</string>
+
+    <!-- Record status labels -->
+    <string name="record_queued">Queued</string>
+    <string name="record_sending">Sending</string>
+    <string name="record_sent">Sent</string>
+    <string name="record_received">Received</string>
+    <string name="record_failed">Failed</string>
+
+    <!-- Record type labels -->
+    <string name="record_inbound">Received</string>
+    <string name="record_outbound">Sent</string>
+    <string name="record_type_file">File</string>
+    <string name="record_type_text">Text</string>
+
+    <!-- Header -->
+    <string name="header_subtitle">Phone Relay · Bluetooth Direct</string>
+
+    <!-- Connection card -->
+    <string name="label_connection_status">Connection Status</string>
+    <string name="label_paired_devices">Paired BlueDesk Phones</string>
+    <string name="label_transfer_limit">Transfer limit: %1$s (set by phone)</string>
+    <string name="label_no_paired_devices">No paired phone found. Please pair your phone in system Bluetooth settings first (device name starts with BlueDesk).</string>
+    <string name="label_background_service">Background Service</string>
+    <string name="label_background_service_desc">Persistent notification, auto-connect on boot</string>
+    <string name="label_device_connected">Connected</string>
+    <string name="label_device_connect">Connect</string>
+
+    <!-- Buttons -->
+    <string name="btn_connect">Connect</string>
+    <string name="btn_disconnect">Disconnect</string>
+    <string name="btn_reconnect">Reconnect</string>
+    <string name="btn_send">Send</string>
+    <string name="btn_send_files">Send Files</string>
+    <string name="btn_send_folder">Send Folder</string>
+    <string name="btn_paste_and_send">Paste clipboard and send</string>
+
+    <!-- Send card -->
+    <string name="send_card_title">Send to Phone Relay</string>
+    <string name="send_text_placeholder">Enter text…</string>
+
+    <!-- Records section -->
+    <string name="records_title">Transfer History</string>
+    <string name="records_empty">No records yet. Received text and files will appear here after connecting.</string>
+
+    <!-- Messages / Snackbars -->
+    <string name="msg_queued">Added to queue</string>
+    <string name="msg_exceeds_limit">%1$s exceeds the transfer limit (%2$s), not sent</string>
+    <string name="msg_cannot_read_file">Cannot read %1$s</string>
+    <string name="msg_read_file_failed">Failed to read file: %1$s</string>
+    <string name="msg_read_folder_failed">Failed to read folder: %1$s</string>
+    <string name="msg_cannot_read_folder">Cannot read the selected folder</string>
+    <string name="msg_folder_empty">The selected folder is empty, not sent</string>
+    <string name="msg_folder_exceeds_limit">Folder exceeds the transfer limit (%1$s), not sent</string>
+    <string name="msg_send_failed">Send failed: %1$s</string>
+    <string name="msg_send_connection_closed">Connection closed</string>
+    <string name="msg_file_send_failed">File send failed: %1$s</string>
+    <string name="msg_folder_send_failed">Folder send failed: %1$s</string>
+    <string name="msg_file_save_failed">Failed to save file: %1$s</string>
+    <string name="msg_file_exceeds_limit_ignored">%1$s exceeds the transfer limit (%2$s), ignored</string>
+    <string name="msg_phone_error">Phone reports: %1$s</string>
+    <string name="msg_batch_parse_error">Cannot parse batch info</string>
+    <string name="msg_batch_file_parse_error">Cannot parse batch file info</string>
+    <string name="msg_batch_id_mismatch">Batch ID mismatch, skipped %1$s</string>
+    <string name="msg_file_exceeds_limit_batch">File exceeds the transfer limit (%1$s), batch discarded</string>
+    <string name="msg_folder_exceeds_limit_batch">Folder exceeds the transfer limit (%1$s), batch discarded</string>
+    <string name="msg_folder_discarded">Folder %1$s discarded</string>
+    <string name="msg_unknown_error">Unknown error</string>
+
+    <!-- Folder labels -->
+    <string name="folder_default_name">Folder</string>
+    <string name="folder_record_title">Folder %1$s (%2$d files)</string>
+    <string name="folder_notif_text">%1$s (%2$d files)</string>
+
+    <!-- Transfer limit -->
+    <string name="limit_unlimited">Unlimited</string>
+
+    <!-- Errors -->
+    <string name="error_not_connected">Not connected</string>
+    <string name="error_connection_failed">Connection failed</string>
 </resources>

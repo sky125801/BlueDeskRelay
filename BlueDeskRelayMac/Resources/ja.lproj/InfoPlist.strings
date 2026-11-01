@@ -1,0 +1,14 @@
+/* BlueDesk リレー — 日本語
+   システムレベルの文言のみ：権限ダイアログとアプリ表示名。
+   メニューバー UI の文言は Sources/BlueDeskRelayMac/Localization.swift にあります。 */
+
+"CFBundleDisplayName" = "BlueDesk リレー";
+
+"NSBluetoothAlwaysUsageDescription" =
+    "BlueDesk リレーは、BlueDesk スマートフォンとクリップボードやファイルをやり取りするために Bluetooth を使用します。";
+
+"NSUserNotificationsUsageDescription" =
+    "転送の進行状況と接続状態をお知らせするために使用します。";
+
+"NSAppleEventsUsageDescription" =
+    "Finder で選択中のファイルを読み取り、ショートカットでスマートフォンに送信するために必要です。";

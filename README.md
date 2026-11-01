@@ -17,6 +17,20 @@
   记忆设备带 ★）；断线重连与重启后优先连记忆设备；「清除记忆」恢复自动发现
 - **状态**：断线自动重连（每 5s），连接 / 收发均有气泡通知
 
+## 多语言
+
+三端（Android / Windows / macOS）统一支持 **简体中文、English、日本語、한국어**，
+按系统语言自动切换，未匹配的语言回退英文。
+
+| 平台 | 文案位置 |
+|---|---|
+| Windows | `BlueDeskRelayWindows/Strings.cs`（四语内嵌，`CultureInfo.CurrentUICulture` 判定） |
+| Android | `app/src/main/res/values*/strings.xml`（默认英文 + `values-zh` / `-ja` / `-ko`） |
+| macOS | `Sources/BlueDeskRelayMac/Localization.swift`（UI 文案）<br>`Resources/<lang>.lproj/InfoPlist.strings`（系统权限弹窗、Finder 服务名） |
+
+> 新增语言：三端各加一份对应资源即可；`Strings.cs` 的 `Get(zh, en, ja, ko)` 需扩参。
+> 日志（`relay.log`、`NSLog`）刻意保持中文，便于对照代码排查，不属于 UI 文案。
+
 ## 构建要求
 
 - Windows 10 2004（build 19041）及以上 / Windows 11

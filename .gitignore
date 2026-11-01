@@ -1,0 +1,23 @@
+# ---- Android (Gradle) ----
+BlueDeskRelayAndroid/.gradle/
+BlueDeskRelayAndroid/app/build/
+BlueDeskRelayAndroid/build/
+BlueDeskRelayAndroid/local.properties
+BlueDeskRelayAndroid/*.iml
+BlueDeskRelayAndroid/.idea/
+
+# ---- macOS (Swift / Xcode) ----
+BlueDeskRelayMac/.build/
+BlueDeskRelayMac/DerivedData/
+BlueDeskRelayMac/*.xcodeproj/xcuserdata/
+BlueDeskRelayMac/*.xcworkspace/xcuserdata/
+BlueDeskRelayMac/Packages/
+
+# ---- Windows (.NET / C#) ----
+BlueDeskRelayWindows/bin/
+BlueDeskRelayWindows/obj/
+BlueDeskRelayWindows/**/bin/
+BlueDeskRelayWindows/**/obj/
+
+# ---- misc ----
+.workbuddy-ai/

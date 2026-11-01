@@ -22,6 +22,20 @@
     <string>12.0</string>
     <key>LSUIElement</key>
     <true/>
+
+    <!-- 本地化：基准语言简体中文，随系统语言在下列语言间切换。
+         UI 文案在 Sources/BlueDeskRelayMac/Localization.swift；
+         系统权限弹窗与 Finder 服务名由 Resources/<lang>.lproj/InfoPlist.strings 提供。 -->
+    <key>CFBundleDevelopmentRegion</key>
+    <string>zh_CN</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>zh_CN</string>
+        <string>en</string>
+        <string>ja</string>
+        <string>ko</string>
+    </array>
+
     <key>NSBluetoothAlwaysUsageDescription</key>
     <string>BlueDesk 互传助手需要通过蓝牙与 BlueDesk 手机交换剪贴板与文件。</string>
     <key>NSUserNotificationsUsageDescription</key>
@@ -33,8 +47,17 @@
         <dict>
             <key>NSMenuItem</key>
             <dict>
+                <!-- NSMenuItem 支持 default + 各语言键，Finder 服务菜单据此显示 -->
                 <key>default</key>
                 <string>发送到 BlueDesk</string>
+                <key>zh_CN</key>
+                <string>发送到 BlueDesk</string>
+                <key>en</key>
+                <string>Send to BlueDesk</string>
+                <key>ja</key>
+                <string>BlueDesk に送信</string>
+                <key>ko</key>
+                <string>BlueDesk로 전송</string>
             </dict>
             <key>NSMessage</key>
             <string>sendFilesToBlueDesk</string>

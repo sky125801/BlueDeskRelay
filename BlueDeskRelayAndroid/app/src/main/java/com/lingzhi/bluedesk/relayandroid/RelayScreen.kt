@@ -43,7 +43,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -132,7 +134,7 @@ fun RelayRoot(
             }
             item {
                 Text(
-                    text = "收发记录",
+                    text = stringResource(R.string.records_title),
                     color = Muted,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
@@ -142,7 +144,7 @@ fun RelayRoot(
             if (records.isEmpty()) {
                 item {
                     Text(
-                        text = "还没有记录。连接手机后，收到的文字与文件会显示在这里。",
+                        text = stringResource(R.string.records_empty),
                         color = Muted,
                         fontSize = 13.sp,
                         modifier = Modifier.padding(vertical = 8.dp)
@@ -164,7 +166,7 @@ private fun Header() {
             fontWeight = FontWeight.SemiBold
         )
         Text(
-            text = "手机中转站 · 蓝牙直连",
+            text = stringResource(R.string.header_subtitle),
             color = Muted,
             fontSize = 12.sp,
             modifier = Modifier.padding(top = 2.dp)
@@ -196,13 +198,13 @@ private fun ConnectionCard(
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = "连接状态",
+                    text = stringResource(R.string.label_connection_status),
                     color = Muted,
                     fontSize = 12.sp
                 )
                 Spacer(Modifier.weight(1f))
-                Text(
-                    text = state.statusLabel(),
+                    Text(
+                        text = state.statusLabel(LocalContext.current),
                     color = state.dotColor(),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium
@@ -210,7 +212,7 @@ private fun ConnectionCard(
             }
 
             Text(
-                text = state.describe(),
+                text = state.describe(LocalContext.current),
                 color = Ink,
                 fontSize = 17.sp,
                 fontWeight = FontWeight.Medium,
@@ -238,7 +240,7 @@ private fun ConnectionCard(
                             containerColor = Color(0xFF2A2320),
                             contentColor = Ink
                         )
-                    ) { Text("断开") }
+                    ) { Text(stringResource(R.string.btn_disconnect)) }
                 } else {
                     Button(
                         onClick = onReconnect,
@@ -247,12 +249,12 @@ private fun ConnectionCard(
                             containerColor = Orange,
                             contentColor = Color(0xFF1A0C04)
                         )
-                    ) { Text("连接") }
+                    ) { Text(stringResource(R.string.btn_connect)) }
                 }
                 OutlinedButton(
                     onClick = onReconnect,
                     shape = RoundedCornerShape(12.dp)
-                ) { Text("重新连接") }
+                ) { Text(stringResource(R.string.btn_reconnect)) }
             }
 
             Row(
@@ -262,9 +264,9 @@ private fun ConnectionCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(text = "后台常驻", color = Ink, fontSize = 14.sp)
+                    Text(text = stringResource(R.string.label_background_service), color = Ink, fontSize = 14.sp)
                     Text(
-                        text = "通知栏常驻，开机自动连接",
+                        text = stringResource(R.string.label_background_service_desc),
                         color = Muted,
                         fontSize = 11.sp
                     )
@@ -280,7 +282,7 @@ private fun ConnectionCard(
             }
 
             Text(
-                text = "传输上限：${formatTransferLimit(transferLimit)}（由手机设置）",
+                text = stringResource(R.string.label_transfer_limit, formatTransferLimit(transferLimit, LocalContext.current)),
                 color = Muted,
                 fontSize = 11.sp,
                 modifier = Modifier.padding(top = 8.dp)
@@ -292,13 +294,13 @@ private fun ConnectionCard(
             )
 
             Text(
-                text = "已配对的 BlueDesk 手机",
+                text = stringResource(R.string.label_paired_devices),
                 color = Muted,
                 fontSize = 12.sp
             )
             if (devices.isEmpty()) {
                 Text(
-                    text = "没有找到配对的手机。请先在系统蓝牙设置里与本机配对（设备名以 BlueDesk 开头）。",
+                    text = stringResource(R.string.label_no_paired_devices),
                     color = Muted,
                     fontSize = 12.sp,
                     modifier = Modifier.padding(top = 8.dp)
@@ -330,7 +332,7 @@ private fun ConnectionCard(
                                     modifier = Modifier.weight(1f)
                                 )
                                 Text(
-                                    text = if (current) "已连接" else "连接",
+                                    text = if (current) stringResource(R.string.label_device_connected) else stringResource(R.string.label_device_connect),
                                     color = if (current) Good else Orange,
                                     fontSize = 12.sp
                                 )
@@ -357,14 +359,14 @@ private fun SendCard(
         shape = RoundedCornerShape(18.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text(text = "发送到手机中转站", color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            Text(text = stringResource(R.string.send_card_title), color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Medium)
             OutlinedTextField(
                 value = text,
                 onValueChange = { text = it },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 10.dp),
-                placeholder = { Text("输入文字…", color = Muted) },
+                placeholder = { Text(stringResource(R.string.send_text_placeholder), color = Muted) },
                 minLines = 3,
                 maxLines = 5,
                 shape = RoundedCornerShape(12.dp)
@@ -388,28 +390,29 @@ private fun SendCard(
                         containerColor = Orange,
                         contentColor = Color(0xFF1A0C04)
                     )
-                ) { Text("发送") }
+                ) { Text(stringResource(R.string.btn_send)) }
                 OutlinedButton(
                     onClick = onSendFiles,
                     shape = RoundedCornerShape(12.dp)
-                ) { Text("发送文件") }
+                ) { Text(stringResource(R.string.btn_send_files)) }
                 OutlinedButton(
                     onClick = onSendFolder,
                     shape = RoundedCornerShape(12.dp)
-                ) { Text("发送文件夹") }
+                ) { Text(stringResource(R.string.btn_send_folder)) }
             }
             TextButton(
                 onClick = {
                     val pasted = clipboard.getText()?.text
                     if (!pasted.isNullOrBlank()) onSendText(pasted.trim())
                 }
-            ) { Text("粘贴剪贴板并发送", color = Orange, fontSize = 13.sp) }
+            ) { Text(stringResource(R.string.btn_paste_and_send), color = Orange, fontSize = 13.sp) }
         }
     }
 }
 
 @Composable
 private fun RecordRow(record: RelayRecord) {
+    val context = LocalContext.current
     Card(
         colors = CardDefaults.cardColors(containerColor = Color(0xFF141110)),
         shape = RoundedCornerShape(14.dp)
@@ -425,14 +428,14 @@ private fun RecordRow(record: RelayRecord) {
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = if (record.inbound) "收到" else "发送",
+                        text = if (record.inbound) context.getString(R.string.record_inbound) else context.getString(R.string.record_outbound),
                         color = if (record.inbound) Orange else Good,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium
                     )
                     Spacer(Modifier.width(6.dp))
                     Text(
-                        text = if (record.isFile) "文件" else "文字",
+                        text = if (record.isFile) context.getString(R.string.record_type_file) else context.getString(R.string.record_type_text),
                         color = Muted,
                         fontSize = 11.sp
                     )
@@ -456,7 +459,7 @@ private fun RecordRow(record: RelayRecord) {
                     }
                     Spacer(Modifier.weight(1f))
                     Text(
-                        text = record.status.label(),
+                        text = record.status.label(LocalContext.current),
                         color = record.status.color(),
                         fontSize = 11.sp
                     )
@@ -474,21 +477,21 @@ private fun ConnState.dotColor(): Color = when (this) {
     else -> Muted
 }
 
-private fun ConnState.statusLabel(): String = when (this) {
-    ConnState.Idle -> "待连接"
-    ConnState.BluetoothOff -> "蓝牙关闭"
-    ConnState.NoDevice -> "无配对设备"
-    is ConnState.Connecting -> "连接中"
-    is ConnState.Connected -> "已连接"
-    is ConnState.Error -> "连接异常"
+private fun ConnState.statusLabel(context: android.content.Context): String = when (this) {
+    ConnState.Idle -> context.getString(R.string.status_idle)
+    ConnState.BluetoothOff -> context.getString(R.string.status_bluetooth_off)
+    ConnState.NoDevice -> context.getString(R.string.status_no_device)
+    is ConnState.Connecting -> context.getString(R.string.status_connecting)
+    is ConnState.Connected -> context.getString(R.string.status_connected)
+    is ConnState.Error -> context.getString(R.string.status_error)
 }
 
-private fun RecordStatus.label(): String = when (this) {
-    RecordStatus.QUEUED -> "排队中"
-    RecordStatus.SENDING -> "发送中"
-    RecordStatus.SENT -> "已发送"
-    RecordStatus.RECEIVED -> "已接收"
-    RecordStatus.FAILED -> "失败"
+private fun RecordStatus.label(context: android.content.Context): String = when (this) {
+    RecordStatus.QUEUED -> context.getString(R.string.record_queued)
+    RecordStatus.SENDING -> context.getString(R.string.record_sending)
+    RecordStatus.SENT -> context.getString(R.string.record_sent)
+    RecordStatus.RECEIVED -> context.getString(R.string.record_received)
+    RecordStatus.FAILED -> context.getString(R.string.record_failed)
 }
 
 private fun RecordStatus.color(): Color = when (this) {
@@ -508,8 +511,8 @@ private fun formatTime(at: Long): String {
     return SimpleDateFormat(pattern, Locale.CHINA).format(Date(at))
 }
 
-private fun formatTransferLimit(limit: Long): String {
-    if (limit <= 0L) return "不限"
+private fun formatTransferLimit(limit: Long, context: android.content.Context): String {
+    if (limit <= 0L) return context.getString(R.string.limit_unlimited)
     val mb = 1024L * 1024L
     return when {
         limit >= mb && limit % mb == 0L -> "${limit / mb} MB"

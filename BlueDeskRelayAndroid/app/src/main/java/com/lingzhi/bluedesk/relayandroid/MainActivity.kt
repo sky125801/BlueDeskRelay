@@ -135,13 +135,13 @@ class MainActivity : ComponentActivity() {
                     val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)
                     if (!text.isNullOrBlank()) {
                         RelayEngine.sendText(text.toString())
-                        shareHint.value = "已加入待发队列"
+                        shareHint.value = getString(R.string.msg_queued)
                     }
                 } else {
                     val uri = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
                     if (uri != null) {
                         RelayEngine.sendUris(listOf(uri))
-                        shareHint.value = "已加入待发队列"
+                        shareHint.value = getString(R.string.msg_queued)
                     }
                 }
             }
@@ -152,7 +152,7 @@ class MainActivity : ComponentActivity() {
                 )
                 if (!uris.isNullOrEmpty()) {
                     RelayEngine.sendUris(uris)
-                    shareHint.value = "已加入待发队列"
+                    shareHint.value = getString(R.string.msg_queued)
                 }
             }
         }

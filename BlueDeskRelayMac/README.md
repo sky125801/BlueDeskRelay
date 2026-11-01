@@ -16,6 +16,20 @@
   记忆设备带 ★）；断线重连与重启后优先连记忆设备；「清除记忆」恢复自动发现
 - **状态**：断线每 5 秒自动重连；连接 / 收发均有系统通知
 
+## 多语言
+
+支持 **简体中文 / English / 日本語 / 한국어**，按系统偏好语言自动切换，未匹配回退英文。
+
+| 内容 | 位置 |
+|---|---|
+| 菜单栏 UI、通知文案 | `Sources/BlueDeskRelayMac/Localization.swift`（四语内嵌，`swift build` 直跑也不会出现裸 key） |
+| 蓝牙 / 通知 / 自动化授权提示、应用显示名 | `Resources/<lang>.lproj/InfoPlist.strings` |
+| Finder「服务」菜单名 | `Info.plist` 的 `NSServices → NSMenuItem`（`default` + 各语言键） |
+
+`bundle.sh` 会把 `Resources/*.lproj` 一并拷进 `Contents/Resources`；改了文案需重新 `./bundle.sh`。
+新增语言时除补 `Localization.swift` 的表，还要加一个 `Resources/<lang>.lproj/InfoPlist.strings`，
+并在 `Info.plist` 的 `CFBundleLocalizations` 里登记。
+
 ## 构建要求
 
 - macOS 12+，Xcode Command Line Tools（`xcode-select --install`）
@@ -59,6 +73,9 @@ cd BlueDeskRelayMac
 Sources/BlueDeskRelayMac/
   main.swift          入口（NSApplication + accessory 策略）
   AppDelegate.swift   菜单栏 UI、热键、通知、剪贴板
+  Localization.swift  四语文案表（zh / en / ja / ko）
   PhoneLink.swift     IOBluetooth RFCOMM 连接 / 收发 / 自动重连
   Protocol.swift      传输协议编解码（与手机端逐字节对齐）+ 文件组装器
+Resources/
+  zh_CN.lproj/ en.lproj/ ja.lproj/ ko.lproj/  → InfoPlist.strings（系统级文案）
 ```

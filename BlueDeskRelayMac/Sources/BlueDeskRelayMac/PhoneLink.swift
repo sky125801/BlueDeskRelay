@@ -126,7 +126,7 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
 
         guard let channelID = relayChannelID(of: phone) else {
             NSLog("[PhoneLink] 「\(phone.name ?? address)」未注册中转服务（手机端中转页需先开启服务）")
-            onError?("「\(phone.name ?? address)」未提供中转服务，请在手机上打开 BlueDesk → 中转 → 开启中转服务")
+            onError?(L10n.t("error.noRelayService", phone.name ?? address))
             return
         }
 
@@ -134,7 +134,7 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
         let status = phone.openRFCOMMChannelSync(&newChannel, withChannelID: channelID, delegate: self)
         guard status == kIOReturnSuccess, let opened = newChannel else {
             NSLog("[PhoneLink] 打开 RFCOMM 通道失败：0x\(String(status, radix: 16))")
-            onError?("连接「\(phone.name ?? address)」失败（请确认手机端中转服务已开启）")
+            onError?(L10n.t("error.connectFailed", phone.name ?? address))
             return
         }
 
@@ -184,7 +184,7 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
 
     func sendText(_ content: String) {
         guard isConnected else {
-            onError?("手机未连接")
+            onError?(L10n.t("error.notConnected"))
             return
         }
         sendFrame(Protocol.text(content))
@@ -192,11 +192,11 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
 
     func sendFile(at url: URL) {
         guard isConnected else {
-            onError?("手机未连接")
+            onError?(L10n.t("error.notConnected"))
             return
         }
         guard let bytes = try? Data(contentsOf: url) else {
-            onError?("读取文件失败")
+            onError?(L10n.t("error.readFileFailed"))
             return
         }
         sendFrame(Protocol.fileMeta(name: url.lastPathComponent, size: bytes.count))
@@ -261,7 +261,7 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
                 let name = obj["name"] as? String ?? "file"
                 let size = obj["size"] as? Int ?? -1
                 guard size >= 0, size <= 64 * 1024 * 1024 else {
-                    onError?("文件大小超限或未知")
+                    onError?(L10n.t("error.sizeOutOfRange"))
                     sendFrame(Protocol.error("file size out of range"))
                     return
                 }
@@ -269,7 +269,7 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
                 asm.begin(name: name, size: size)
                 assembler = asm
             } catch {
-                onError?("文件元信息解析失败")
+                onError?(L10n.t("error.metaParseFailed"))
             }
 
         case Protocol.FrameType.fileChunk:
@@ -283,7 +283,7 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
                 onFile?(path, asm.received)
                 if frame.needAck { sendFrame(Protocol.ack(of: frame.type)) }
             } catch {
-                onError?("保存文件失败：\(error.localizedDescription)")
+                onError?(L10n.t("error.saveFailed", error.localizedDescription))
             }
 
         case Protocol.FrameType.ping:

@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">BlueDesk Relay</string>
+
+    <!-- Notification channels -->
+    <string name="channel_connection">中转连接</string>
+    <string name="channel_connection_desc">保持与 BlueDesk 手机的蓝牙连接</string>
+    <string name="channel_received">接收内容</string>
+    <string name="channel_received_desc">收到文字或文件时提醒</string>
+
+    <!-- Notification titles -->
+    <string name="notif_received_text">收到文字</string>
+    <string name="notif_received_file">收到文件</string>
+    <string name="notif_received_folder">已接收文件夹</string>
+
+    <!-- Connection states -->
+    <string name="state_idle">等待连接</string>
+    <string name="state_bluetooth_off">蓝牙未开启</string>
+    <string name="state_no_device">未找到已配对的 BlueDesk 手机</string>
+    <string name="state_connecting">正在连接 %1$s…</string>
+    <string name="state_connected">已连接 %1$s</string>
+    <string name="state_error_bluetooth_unsupported">这台设备不支持蓝牙</string>
+    <string name="state_error_no_permission">缺少「附近的设备」权限</string>
+    <string name="state_error_no_bluetooth_permission">缺少蓝牙权限</string>
+    <string name="state_connect_failed">无法连接，请确认手机端已开启互传服务</string>
+
+    <!-- Connection status labels -->
+    <string name="status_idle">待连接</string>
+    <string name="status_bluetooth_off">蓝牙关闭</string>
+    <string name="status_no_device">无配对设备</string>
+    <string name="status_connecting">连接中</string>
+    <string name="status_connected">已连接</string>
+    <string name="status_error">连接异常</string>
+
+    <!-- Record status labels -->
+    <string name="record_queued">排队中</string>
+    <string name="record_sending">发送中</string>
+    <string name="record_sent">已发送</string>
+    <string name="record_received">已接收</string>
+    <string name="record_failed">失败</string>
+
+    <!-- Record type labels -->
+    <string name="record_inbound">收到</string>
+    <string name="record_outbound">发送</string>
+    <string name="record_type_file">文件</string>
+    <string name="record_type_text">文字</string>
+
+    <!-- Header -->
+    <string name="header_subtitle">手机中转站 · 蓝牙直连</string>
+
+    <!-- Connection card -->
+    <string name="label_connection_status">连接状态</string>
+    <string name="label_paired_devices">已配对的 BlueDesk 手机</string>
+    <string name="label_transfer_limit">传输上限：%1$s（由手机设置）</string>
+    <string name="label_no_paired_devices">没有找到配对的手机。请先在系统蓝牙设置里与本机配对（设备名以 BlueDesk 开头）。</string>
+    <string name="label_background_service">后台常驻</string>
+    <string name="label_background_service_desc">通知栏常驻，开机自动连接</string>
+    <string name="label_device_connected">已连接</string>
+    <string name="label_device_connect">连接</string>
+
+    <!-- Buttons -->
+    <string name="btn_connect">连接</string>
+    <string name="btn_disconnect">断开</string>
+    <string name="btn_reconnect">重新连接</string>
+    <string name="btn_send">发送</string>
+    <string name="btn_send_files">发送文件</string>
+    <string name="btn_send_folder">发送文件夹</string>
+    <string name="btn_paste_and_send">粘贴剪贴板并发送</string>
+
+    <!-- Send card -->
+    <string name="send_card_title">发送到手机中转站</string>
+    <string name="send_text_placeholder">输入文字…</string>
+
+    <!-- Records section -->
+    <string name="records_title">收发记录</string>
+    <string name="records_empty">还没有记录。连接手机后，收到的文字与文件会显示在这里。</string>
+
+    <!-- Messages / Snackbars -->
+    <string name="msg_queued">已加入待发队列</string>
+    <string name="msg_exceeds_limit">%1$s 超过传输上限（%2$s），未发送</string>
+    <string name="msg_cannot_read_file">无法读取 %1$s</string>
+    <string name="msg_read_file_failed">读取文件失败：%1$s</string>
+    <string name="msg_read_folder_failed">读取文件夹失败：%1$s</string>
+    <string name="msg_cannot_read_folder">无法读取所选文件夹</string>
+    <string name="msg_folder_empty">所选文件夹为空，未发送</string>
+    <string name="msg_folder_exceeds_limit">文件夹超过传输上限（%1$s），未发送</string>
+    <string name="msg_send_failed">发送失败：%1$s</string>
+    <string name="msg_send_connection_closed">连接已断开</string>
+    <string name="msg_file_send_failed">文件发送失败：%1$s</string>
+    <string name="msg_folder_send_failed">文件夹发送失败：%1$s</string>
+    <string name="msg_file_save_failed">文件保存失败：%1$s</string>
+    <string name="msg_file_exceeds_limit_ignored">%1$s 超过传输上限（%2$s），已忽略</string>
+    <string name="msg_phone_error">手机端提示：%1$s</string>
+    <string name="msg_batch_parse_error">批次信息无法解析</string>
+    <string name="msg_batch_file_parse_error">批次文件信息无法解析</string>
+    <string name="msg_batch_id_mismatch">批次 id 不匹配，已忽略 %1$s</string>
+    <string name="msg_file_exceeds_limit_batch">文件超过传输上限（%1$s），批次已丢弃</string>
+    <string name="msg_folder_exceeds_limit_batch">文件夹超过传输上限（%1$s），批次已丢弃</string>
+    <string name="msg_folder_discarded">文件夹 %1$s 已丢弃</string>
+    <string name="msg_unknown_error">未知错误</string>
+
+    <!-- Folder labels -->
+    <string name="folder_default_name">文件夹</string>
+    <string name="folder_record_title">文件夹 %1$s（%2$d 个文件）</string>
+    <string name="folder_notif_text">%1$s（%2$d 个文件）</string>
+
+    <!-- Transfer limit -->
+    <string name="limit_unlimited">不限</string>
+
+    <!-- Errors -->
+    <string name="error_not_connected">未连接</string>
+    <string name="error_connection_failed">连接失败</string>
+</resources>

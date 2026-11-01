@@ -56,20 +56,20 @@ public sealed class RelayApp : Form
         WindowState = FormWindowState.Minimized;
         FormBorderStyle = FormBorderStyle.None;
         Opacity = 0;
-        Text = "BlueDesk 互传助手";
+        Text = Strings.AppTitle;
 
-        _statusItem = new ToolStripMenuItem("未连接") { Enabled = false };
-        _connectItem = new ToolStripMenuItem("连接设备");
+        _statusItem = new ToolStripMenuItem(Strings.NotConnected) { Enabled = false };
+        _connectItem = new ToolStripMenuItem(Strings.ConnectDevice);
         _connectItem.DropDownOpening += (_, _) => RebuildConnectMenu();
-        _sendClipItem = new ToolStripMenuItem("发送剪贴板内容\tCtrl+Alt+B", null,
+        _sendClipItem = new ToolStripMenuItem(Strings.SendClipboard, null,
             async (_, _) => await SendClipboardAsync()) { Enabled = false };
-        _sendFileItem = new ToolStripMenuItem("发送文件…", null,
+        _sendFileItem = new ToolStripMenuItem(Strings.SendFile, null,
             async (_, _) => await SendFileAsync()) { Enabled = false };
-        _sendFolderItem = new ToolStripMenuItem("发送文件夹…", null,
+        _sendFolderItem = new ToolStripMenuItem(Strings.SendFolder, null,
             async (_, _) => await SendFolderAsync()) { Enabled = false };
-        _sendSelectedItem = new ToolStripMenuItem("发送资源管理器选中的文件\tCtrl+Alt+F", null,
+        _sendSelectedItem = new ToolStripMenuItem(Strings.SendSelected, null,
             async (_, _) => await SendSelectedFromExplorerAsync()) { Enabled = false };
-        _maxBytesItem = new ToolStripMenuItem(MaxBytesText(RelaySettings.LoadMaxBytes()))
+        _maxBytesItem = new ToolStripMenuItem(Strings.MaxBytesText(RelaySettings.LoadMaxBytes()))
         {
             Enabled = false,
         };
@@ -86,13 +86,13 @@ public sealed class RelayApp : Form
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_maxBytesItem);
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add(new ToolStripMenuItem("退出", null, (_, _) => Quit()));
+        menu.Items.Add(new ToolStripMenuItem(Strings.Quit, null, (_, _) => Quit()));
 
         _tray = new NotifyIcon
         {
             // 托盘也使用应用图标，保持和任务栏 / 资源管理器一致
             Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application,
-            Text = "BlueDesk 互传助手",
+            Text = Strings.AppTitle,
             ContextMenuStrip = menu,
             Visible = true,
         };
@@ -100,15 +100,15 @@ public sealed class RelayApp : Form
 
         _link.ConnectionChanged += (connected, name) => Post(() =>
         {
-            RelayLog.Write(connected ? $"已连接 {name}" : $"连接断开（{name}）");
-            _statusItem.Text = connected ? $"已连接 {name}" : "未连接（自动重连中）";
+            RelayLog.Write(connected ? Strings.Format(Strings.ConnectedFormat, name) : Strings.Format(Strings.DisconnectedFormat, name));
+            _statusItem.Text = connected ? Strings.Format(Strings.ConnectedFormat, name) : Strings.NotConnectedReconnecting;
             _sendClipItem.Enabled = connected;
             _sendFileItem.Enabled = connected;
             _sendFolderItem.Enabled = connected;
             _sendSelectedItem.Enabled = connected;
-            _tray.Text = connected ? $"BlueDesk · 已连接 {name}" : "BlueDesk 互传助手 · 未连接";
-            _tray.ShowBalloonTip(1500, "BlueDesk 互传助手",
-                connected ? $"已连接 {name}" : "手机连接已断开，正在重连…", ToolTipIcon.Info);
+            _tray.Text = connected ? Strings.Format(Strings.TrayConnectedFormat, name) : Strings.AppTitle;
+            _tray.ShowBalloonTip(1500, Strings.AppTitle,
+                connected ? Strings.Format(Strings.ConnectedFormat, name) : Strings.PhoneDisconnectedReconnecting, ToolTipIcon.Info);
 
             // 右键菜单送来的文件可能在连接建立前就排队了，这里补发
             if (connected && _pendingShellFiles.Count > 0)
@@ -124,48 +124,48 @@ public sealed class RelayApp : Form
             if (TrySetClipboard(text))
             {
                 RelayLog.Write($"收到文本 {text.Length} 字，已写入剪贴板");
-                _tray.ShowBalloonTip(2000, "收到文本",
-                    $"已写入剪贴板（{text.Length} 字符），可直接 Ctrl+V", ToolTipIcon.Info);
+                _tray.ShowBalloonTip(2000, Strings.TextReceivedTitle,
+                    Strings.Format(Strings.TextReceivedBodyFormat, text.Length), ToolTipIcon.Info);
             }
             else
             {
                 RelayLog.Write($"收到文本 {text.Length} 字，但写剪贴板失败");
-                _tray.ShowBalloonTip(2000, "写剪贴板失败",
-                    "剪贴板被其他程序占用，请稍后重试", ToolTipIcon.Error);
+                _tray.ShowBalloonTip(2000, Strings.ClipboardWriteFailed,
+                    Strings.ClipboardBusy, ToolTipIcon.Error);
             }
         });
 
         _link.FileReceived += (path, size) => Post(() =>
         {
-            RelayLog.Write($"收到文件 {path}（{FormatSize(size)}）");
-            _tray.ShowBalloonTip(3000, "收到文件",
-                $"{Path.GetFileName(path)}（{FormatSize(size)}）已保存到 {Path.GetDirectoryName(path)}",
+            RelayLog.Write($"收到文件 {path}（{Strings.FormatSize(size)}）");
+            _tray.ShowBalloonTip(3000, Strings.FileReceivedTitle,
+                Strings.Format(Strings.FileReceivedBodyFormat, Path.GetFileName(path), Strings.FormatSize(size), Path.GetDirectoryName(path) ?? PhoneLink.GetReceiveDir()),
                 ToolTipIcon.Info);
         });
 
         // 手机下发传输上限：仅刷新菜单文案（0 显示「不限」）
         _link.MaxBytesChanged += max => Post(() =>
         {
-            _maxBytesItem.Text = MaxBytesText(max);
+            _maxBytesItem.Text = Strings.MaxBytesText(max);
         });
 
         // 文件夹批次收完只弹一次气泡；单个文件不再逐个提示
         _link.FolderReceived += (folder, files) => Post(() =>
         {
-            _tray.ShowBalloonTip(3000, "已接收文件夹",
-                $"已接收文件夹 {folder}（{files} 个文件）", ToolTipIcon.Info);
+            _tray.ShowBalloonTip(3000, Strings.FolderReceivedTitle,
+                Strings.Format(Strings.FolderReceivedBodyFormat, folder, files), ToolTipIcon.Info);
         });
 
         // 全局热键 Ctrl+Alt+B（剪贴板）；Ctrl+Alt+F（发送资源管理器里选中的文件）
         if (!RegisterHotKey(Handle, HotkeyId, ModControl | ModAlt, VkB))
         {
-            _tray.ShowBalloonTip(3000, "热键注册失败",
-                "Ctrl+Alt+B 已被其他程序占用，请用托盘菜单发送", ToolTipIcon.Warning);
+            _tray.ShowBalloonTip(3000, Strings.HotkeyFailed,
+                Strings.HotkeyBOccupied, ToolTipIcon.Warning);
         }
         if (!RegisterHotKey(Handle, HotkeyFileId, ModControl | ModAlt, VkF))
         {
-            _tray.ShowBalloonTip(3000, "热键注册失败",
-                "Ctrl+Alt+F 已被其他程序占用，请用托盘菜单发送选中的文件", ToolTipIcon.Warning);
+            _tray.ShowBalloonTip(3000, Strings.HotkeyFailed,
+                Strings.HotkeyFOccupied, ToolTipIcon.Warning);
         }
 
         // 自动连接 + 断线重连（常驻后台，直到退出）
@@ -181,8 +181,8 @@ public sealed class RelayApp : Form
         if (initialFiles is { Count: > 0 })
         {
             _pendingShellFiles.AddRange(initialFiles);
-            _tray.ShowBalloonTip(2000, "BlueDesk 互传助手",
-                $"正在连接手机，连接后将发送 {initialFiles.Count} 个文件", ToolTipIcon.Info);
+            _tray.ShowBalloonTip(2000, Strings.AppTitle,
+                Strings.Format(Strings.ConnectingWillSendFormat, initialFiles.Count), ToolTipIcon.Info);
         }
     }
 
@@ -208,7 +208,7 @@ public sealed class RelayApp : Form
         if (_paired.Count == 0)
         {
             var hint = new ToolStripMenuItem(
-                _pairedLoading ? "正在读取已配对设备…" : "无已配对设备（先在系统设置→蓝牙配对）")
+                _pairedLoading ? Strings.ReadingPaired : Strings.NoPairedDevices)
             {
                 Enabled = false,
             };
@@ -224,7 +224,7 @@ public sealed class RelayApp : Form
                 var isConnected = string.Equals(device.Address, connected, StringComparison.OrdinalIgnoreCase);
                 var isPreferred = string.Equals(device.Address, preferred, StringComparison.OrdinalIgnoreCase);
                 // 打勾留给「正在连接」，记忆设备用 ★ 标注（与 Mac 端一致）
-                var text = !_link.IsConnected && isPreferred ? $"★ {device.Name}（记忆）" : device.Name;
+                var text = !_link.IsConnected && isPreferred ? Strings.Format(Strings.PreferredMark, device.Name) : device.Name;
 
                 var item = new ToolStripMenuItem(text) { Checked = isConnected };
                 item.Click += (_, _) => OnPickDevice(device);
@@ -234,9 +234,9 @@ public sealed class RelayApp : Form
             drop.Add(new ToolStripSeparator());
         }
 
-        drop.Add(new ToolStripMenuItem("刷新设备列表", null,
+        drop.Add(new ToolStripMenuItem(Strings.RefreshDevices, null,
             async (_, _) => { await RefreshPairedAsync(); }));
-        drop.Add(new ToolStripMenuItem("清除记忆（恢复自动发现 BlueDesk*）", null,
+        drop.Add(new ToolStripMenuItem(Strings.ClearPreferred, null,
             (_, _) => ClearPreferred()));
 
         // 缓存过期就在后台刷新，下次展开即为最新（不阻塞本次展开）
@@ -268,14 +268,14 @@ public sealed class RelayApp : Form
     private void OnPickDevice(PairedDevice device)
     {
         _link.RequestConnect(device.Address, device.Name);
-        _tray.ShowBalloonTip(1500, "连接中", $"正在连接「{device.Name}」…", ToolTipIcon.Info);
+        _tray.ShowBalloonTip(1500, Strings.Connecting, Strings.Format(Strings.ConnectingFormat, device.Name), ToolTipIcon.Info);
     }
 
     private void ClearPreferred()
     {
         _link.ClearPreferred();
-        _tray.ShowBalloonTip(1500, "已清除记忆",
-            "下次将自动连接第一台 BlueDesk 手机", ToolTipIcon.Info);
+        _tray.ShowBalloonTip(1500, Strings.PreferredCleared,
+            Strings.PreferredClearedBody, ToolTipIcon.Info);
     }
 
     /// <summary>从后台线程安全地投递到 UI 线程</summary>
@@ -314,21 +314,21 @@ public sealed class RelayApp : Form
         {
             if (!_link.IsConnected)
             {
-                _tray.ShowBalloonTip(1500, "未连接", "正在连接手机，稍后重试", ToolTipIcon.Warning);
+                _tray.ShowBalloonTip(1500, Strings.NotConnected, Strings.NotConnectedTryAgain, ToolTipIcon.Warning);
                 return;
             }
             var text = GetClipboardText();
             if (string.IsNullOrEmpty(text))
             {
-                _tray.ShowBalloonTip(1500, "剪贴板为空", "先复制一段文字再发送", ToolTipIcon.Warning);
+                _tray.ShowBalloonTip(1500, Strings.ClipboardEmpty, Strings.ClipboardEmptyHint, ToolTipIcon.Warning);
                 return;
             }
             await _link.SendTextAsync(text);
-            _tray.ShowBalloonTip(1500, "已发送", $"{text.Length} 字符已交给手机", ToolTipIcon.Info);
+            _tray.ShowBalloonTip(1500, Strings.SentTitle, Strings.Format(Strings.SentBodyFormat, text.Length), ToolTipIcon.Info);
         }
         catch (Exception ex)
         {
-            _tray.ShowBalloonTip(2000, "发送失败", ex.Message, ToolTipIcon.Error);
+            _tray.ShowBalloonTip(2000, Strings.SendFailed, ex.Message, ToolTipIcon.Error);
         }
     }
 
@@ -336,28 +336,28 @@ public sealed class RelayApp : Form
     {
         try
         {
-            using var dialog = new OpenFileDialog { Title = "选择要发送的文件", Multiselect = false };
+            using var dialog = new OpenFileDialog { Title = Strings.SelectFile, Multiselect = false };
             if (dialog.ShowDialog(this) != DialogResult.OK) return;
             if (!_link.IsConnected)
             {
-                _tray.ShowBalloonTip(1500, "未连接", "正在连接手机，稍后重试", ToolTipIcon.Warning);
+                _tray.ShowBalloonTip(1500, Strings.NotConnected, Strings.NotConnectedTryAgain, ToolTipIcon.Warning);
                 return;
             }
             var info = new FileInfo(dialog.FileName);
             if (!WithinLimit(info.Length, out var limitText))
             {
-                _tray.ShowBalloonTip(2000, "文件过大",
-                    $"{info.Name} 超过传输上限 {limitText}", ToolTipIcon.Warning);
+                _tray.ShowBalloonTip(2000, Strings.FileTooLarge,
+                    Strings.Format(Strings.FileTooLargeFormat, info.Name, limitText), ToolTipIcon.Warning);
                 return;
             }
-            _tray.ShowBalloonTip(1500, "发送中", $"{info.Name}（{FormatSize(info.Length)}）传输中…", ToolTipIcon.Info);
+            _tray.ShowBalloonTip(1500, Strings.SendingTitle, Strings.Format(Strings.SendingBodyFormat, info.Name, Strings.FormatSize(info.Length)), ToolTipIcon.Info);
             await _fileSendGate.WaitAsync();
             try { await _link.SendFileAsync(dialog.FileName); }
             finally { _fileSendGate.Release(); }
         }
         catch (Exception ex)
         {
-            _tray.ShowBalloonTip(2000, "发送失败", ex.Message, ToolTipIcon.Error);
+            _tray.ShowBalloonTip(2000, Strings.SendFailed, ex.Message, ToolTipIcon.Error);
         }
     }
 
@@ -368,31 +368,31 @@ public sealed class RelayApp : Form
         {
             using var dialog = new FolderBrowserDialog
             {
-                Description = "选择要发送的文件夹",
+                Description = Strings.SelectFolder,
                 UseDescriptionForTitle = true,
             };
             if (dialog.ShowDialog(this) != DialogResult.OK) return;
             if (!_link.IsConnected)
             {
-                _tray.ShowBalloonTip(1500, "未连接", "正在连接手机，稍后重试", ToolTipIcon.Warning);
+                _tray.ShowBalloonTip(1500, Strings.NotConnected, Strings.NotConnectedTryAgain, ToolTipIcon.Warning);
                 return;
             }
 
-            _tray.ShowBalloonTip(2000, "发送中", "正在统计并发送文件夹…", ToolTipIcon.Info);
+            _tray.ShowBalloonTip(2000, Strings.SendingTitle, Strings.SendingFolderStats, ToolTipIcon.Info);
             await _fileSendGate.WaitAsync();
             try
             {
                 var result = await _link.SendFolderAsync(dialog.SelectedPath);
-                var skipped = result.Skipped > 0 ? $"，跳过 {result.Skipped} 个不可读项" : "";
-                _tray.ShowBalloonTip(3000, "已发送文件夹",
-                    $"{result.FolderName}（{result.FileCount} 个文件，{FormatSize(result.Bytes)}）已交给手机{skipped}",
+                var skipped = result.Skipped > 0 ? Strings.Format(Strings.SkippedFormat, result.Skipped) : "";
+                _tray.ShowBalloonTip(3000, Strings.FolderSentTitle,
+                    Strings.Format(Strings.FolderSentBodyFormat, result.FolderName, result.FileCount, Strings.FormatSize(result.Bytes), skipped),
                     result.Skipped > 0 ? ToolTipIcon.Warning : ToolTipIcon.Info);
             }
             finally { _fileSendGate.Release(); }
         }
         catch (Exception ex)
         {
-            _tray.ShowBalloonTip(3000, "发送文件夹失败", ex.Message, ToolTipIcon.Error);
+            _tray.ShowBalloonTip(3000, Strings.SendFolderFailed, ex.Message, ToolTipIcon.Error);
         }
     }
 
@@ -408,8 +408,8 @@ public sealed class RelayApp : Form
             var queued = paths.Where(File.Exists).ToList();
             if (queued.Count == 0) return;
             _pendingShellFiles.AddRange(queued);
-            _tray.ShowBalloonTip(2000, "等待连接",
-                $"{queued.Count} 个文件已排队，连上手机后自动发送", ToolTipIcon.Info);
+            _tray.ShowBalloonTip(2000, Strings.WaitingConnection,
+                Strings.Format(Strings.WaitingConnectionFormat, queued.Count), ToolTipIcon.Info);
             return;
         }
 
@@ -422,30 +422,30 @@ public sealed class RelayApp : Form
 
                 if (!_link.IsConnected)
                 {
-                    _tray.ShowBalloonTip(1500, "未连接",
-                        "手机还没连上，暂时无法发送", ToolTipIcon.Warning);
+                    _tray.ShowBalloonTip(1500, Strings.NotConnected,
+                        Strings.NotConnectedYet, ToolTipIcon.Warning);
                     continue;
                 }
 
                 var info = new FileInfo(path);
                 if (!WithinLimit(info.Length, out var limitText))
                 {
-                    _tray.ShowBalloonTip(2000, "文件过大",
-                        $"{info.Name} 超过传输上限 {limitText}", ToolTipIcon.Warning);
+                    _tray.ShowBalloonTip(2000, Strings.FileTooLarge,
+                        Strings.Format(Strings.FileTooLargeFormat, info.Name, limitText), ToolTipIcon.Warning);
                     continue;
                 }
 
-                _tray.ShowBalloonTip(1500, "发送中",
-                    $"{info.Name}（{FormatSize(info.Length)}）传输中…", ToolTipIcon.Info);
+                _tray.ShowBalloonTip(1500, Strings.SendingTitle,
+                    Strings.Format(Strings.SendingBodyFormat, info.Name, Strings.FormatSize(info.Length)), ToolTipIcon.Info);
                 await _fileSendGate.WaitAsync();
                 try { await _link.SendFileAsync(path); }
                 finally { _fileSendGate.Release(); }
-                _tray.ShowBalloonTip(2000, "已发送",
-                    $"{info.Name} 已交给手机", ToolTipIcon.Info);
+                _tray.ShowBalloonTip(2000, Strings.SentTitle,
+                    Strings.Format(Strings.FileSentBodyFormat, info.Name), ToolTipIcon.Info);
             }
             catch (Exception ex)
             {
-                _tray.ShowBalloonTip(2000, "发送失败", ex.Message, ToolTipIcon.Error);
+                _tray.ShowBalloonTip(2000, Strings.SendFailed, ex.Message, ToolTipIcon.Error);
             }
         }
     }
@@ -461,8 +461,8 @@ public sealed class RelayApp : Form
 
         if (files.Count == 0)
         {
-            _tray.ShowBalloonTip(2500, "没有选中文件",
-                "先在资源管理器里选中文件再按 Ctrl+Alt+F；也可以 Ctrl+C 复制文件后按",
+            _tray.ShowBalloonTip(2500, Strings.NoFileSelected,
+                Strings.NoFileSelectedHint,
                 ToolTipIcon.Warning);
             return;
         }
@@ -591,30 +591,11 @@ public sealed class RelayApp : Form
         return false;
     }
 
-    private static string FormatSize(long bytes) => bytes switch
-    {
-        >= 1024 * 1024 => $"{bytes / 1024f / 1024f:F1} MB",
-        >= 1024 => $"{bytes / 1024f:F1} KB",
-        _ => $"{bytes} B",
-    };
-
-    /// <summary>传输上限文案（0 = 不限；整 MB 不带小数）</summary>
-    private static string FormatLimit(long maxBytes)
-    {
-        if (maxBytes <= 0) return "不限";
-        if (maxBytes % (1024 * 1024) == 0) return $"{maxBytes / (1024 * 1024)} MB";
-        return FormatSize(maxBytes);
-    }
-
-    /// <summary>菜单里那行只读文案</summary>
-    private static string MaxBytesText(long maxBytes) =>
-        $"传输上限：{FormatLimit(maxBytes)}（由手机设置）";
-
     /// <summary>按手机下发的上限校验（0 不限）；超限时给出文案</summary>
     private static bool WithinLimit(long size, out string limitText)
     {
         var max = RelaySettings.LoadMaxBytes();
-        limitText = FormatLimit(max);
+        limitText = Strings.FormatLimit(max);
         return max <= 0 || size <= max;
     }
 
@@ -635,7 +616,7 @@ public sealed class RelayApp : Form
 internal static class ExplorerMenu
 {
     private const string KeyPath = @"Software\Classes\*\shell\BlueDeskSend";
-    private const string DisplayName = "发送到 BlueDesk";
+    private static readonly string DisplayName = Strings.SendToBlueDesk;
 
     public static void Install()
     {
@@ -740,13 +721,13 @@ internal static class Program
                 // 资源管理器右键：交给已在运行的实例发送，本进程直接退出
                 if (ShellSendIpc.TrySendToRunning(shellFiles)) return;
                 MessageBox.Show(
-                    "BlueDesk 互传助手已在运行，但没能把文件交给它。\n请改用托盘图标右键的「发送文件…」。",
-                    "BlueDesk 互传助手", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    Strings.AlreadyRunningTransferFailed,
+                    Strings.AppTitle, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
-            MessageBox.Show("BlueDesk 互传助手已在运行（请查看任务栏右下角托盘图标）。",
-                "BlueDesk 互传助手", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(Strings.AlreadyRunning,
+                Strings.AppTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 

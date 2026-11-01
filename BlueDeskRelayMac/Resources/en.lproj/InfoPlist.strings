@@ -1,0 +1,14 @@
+/* BlueDesk Relay — English
+   System-level strings only: permission prompts and the app display name.
+   Menu-bar UI strings live in Sources/BlueDeskRelayMac/Localization.swift */
+
+"CFBundleDisplayName" = "BlueDesk Relay";
+
+"NSBluetoothAlwaysUsageDescription" =
+    "BlueDesk Relay needs Bluetooth to exchange clipboard content and files with your BlueDesk phone.";
+
+"NSUserNotificationsUsageDescription" =
+    "Used to show transfer progress and connection status.";
+
+"NSAppleEventsUsageDescription" =
+    "Needed to read the files selected in Finder so they can be sent to your phone with a shortcut.";

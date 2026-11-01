@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">BlueDesk Relay</string>
+
+    <!-- Notification channels -->
+    <string name="channel_connection">릴레이 연결</string>
+    <string name="channel_connection_desc">BlueDesk 폰과의 블루투스 연결 유지</string>
+    <string name="channel_received">수신 내용</string>
+    <string name="channel_received_desc">텍스트 또는 파일 수신 시 알림</string>
+
+    <!-- Notification titles -->
+    <string name="notif_received_text">텍스트 수신</string>
+    <string name="notif_received_file">파일 수신</string>
+    <string name="notif_received_folder">폴더 수신</string>
+
+    <!-- Connection states -->
+    <string name="state_idle">연결 대기 중</string>
+    <string name="state_bluetooth_off">블루투스가 꺼져 있습니다</string>
+    <string name="state_no_device">페어링된 BlueDesk 폰을 찾을 수 없습니다</string>
+    <string name="state_connecting">%1$s에 연결 중…</string>
+    <string name="state_connected">%1$s에 연결됨</string>
+    <string name="state_error_bluetooth_unsupported">이 기기는 블루투스를 지원하지 않습니다</string>
+    <string name="state_error_no_permission">"주변 기기" 권한이 없습니다</string>
+    <string name="state_error_no_bluetooth_permission">블루투스 권한이 없습니다</string>
+    <string name="state_connect_failed">연결할 수 없습니다. 폰에서 릴레이 서비스가 활성화되어 있는지 확인하세요.</string>
+
+    <!-- Connection status labels -->
+    <string name="status_idle">대기 중</string>
+    <string name="status_bluetooth_off">블루투스 꺼짐</string>
+    <string name="status_no_device">페어링된 기기 없음</string>
+    <string name="status_connecting">연결 중</string>
+    <string name="status_connected">연결됨</string>
+    <string name="status_error">연결 오류</string>
+
+    <!-- Record status labels -->
+    <string name="record_queued">대기 중</string>
+    <string name="record_sending">전송 중</string>
+    <string name="record_sent">전송됨</string>
+    <string name="record_received">수신됨</string>
+    <string name="record_failed">실패</string>
+
+    <!-- Record type labels -->
+    <string name="record_inbound">수신</string>
+    <string name="record_outbound">전송</string>
+    <string name="record_type_file">파일</string>
+    <string name="record_type_text">텍스트</string>
+
+    <!-- Header -->
+    <string name="header_subtitle">폰 릴레이 · 블루투스 직결</string>
+
+    <!-- Connection card -->
+    <string name="label_connection_status">연결 상태</string>
+    <string name="label_paired_devices">페어링된 BlueDesk 폰</string>
+    <string name="label_transfer_limit">전송 한도: %1$s (폰에서 설정)</string>
+    <string name="label_no_paired_devices">페어링된 폰을 찾을 수 없습니다. 시스템 블루투스 설정에서 먼저 페어링하세요 (장치 이름이 BlueDesk로 시작).</string>
+    <string name="label_background_service">백그라운드 상시 실행</string>
+    <string name="label_background_service_desc">알림 표시줄 상시 표시, 부팅 시 자동 연결</string>
+    <string name="label_device_connected">연결됨</string>
+    <string name="label_device_connect">연결</string>
+
+    <!-- Buttons -->
+    <string name="btn_connect">연결</string>
+    <string name="btn_disconnect">연결 해제</string>
+    <string name="btn_reconnect">재연결</string>
+    <string name="btn_send">전송</string>
+    <string name="btn_send_files">파일 전송</string>
+    <string name="btn_send_folder">폴더 전송</string>
+    <string name="btn_paste_and_send">클립보드 붙여넣고 전송</string>
+
+    <!-- Send card -->
+    <string name="send_card_title">폰 릴레이로 전송</string>
+    <string name="send_text_placeholder">텍스트 입력…</string>
+
+    <!-- Records section -->
+    <string name="records_title">전송 기록</string>
+    <string name="records_empty">기록이 없습니다. 연결 후 수신된 텍스트와 파일이 여기에 표시됩니다.</string>
+
+    <!-- Messages / Snackbars -->
+    <string name="msg_queued">대기열에 추가됨</string>
+    <string name="msg_exceeds_limit">%1$s이(가) 전송 한도(%2$s)를 초과하여 전송되지 않음</string>
+    <string name="msg_cannot_read_file">%1$s을(를) 읽을 수 없음</string>
+    <string name="msg_read_file_failed">파일 읽기 실패: %1$s</string>
+    <string name="msg_read_folder_failed">폴더 읽기 실패: %1$s</string>
+    <string name="msg_cannot_read_folder">선택한 폴더를 읽을 수 없음</string>
+    <string name="msg_folder_empty">선택한 폴더가 비어 있어 전송되지 않음</string>
+    <string name="msg_folder_exceeds_limit">폴더가 전송 한도(%1$s)를 초과하여 전송되지 않음</string>
+    <string name="msg_send_failed">전송 실패: %1$s</string>
+    <string name="msg_send_connection_closed">연결이 끊어졌습니다</string>
+    <string name="msg_file_send_failed">파일 전송 실패: %1$s</string>
+    <string name="msg_folder_send_failed">폴더 전송 실패: %1$s</string>
+    <string name="msg_file_save_failed">파일 저장 실패: %1$s</string>
+    <string name="msg_file_exceeds_limit_ignored">%1$s이(가) 전송 한도(%2$s)를 초과하여 무시됨</string>
+    <string name="msg_phone_error">폰 알림: %1$s</string>
+    <string name="msg_batch_parse_error">배치 정보를 분석할 수 없음</string>
+    <string name="msg_batch_file_parse_error">배치 파일 정보를 분석할 수 없음</string>
+    <string name="msg_batch_id_mismatch">배치 ID 불일치, %1$s 건너뜀</string>
+    <string name="msg_file_exceeds_limit_batch">파일이 전송 한도(%1$s)를 초과하여 배치가 삭제됨</string>
+    <string name="msg_folder_exceeds_limit_batch">폴더가 전송 한도(%1$s)를 초과하여 배치가 삭제됨</string>
+    <string name="msg_folder_discarded">폴더 %1$s이(가) 삭제됨</string>
+    <string name="msg_unknown_error">알 수 없는 오류</string>
+
+    <!-- Folder labels -->
+    <string name="folder_default_name">폴더</string>
+    <string name="folder_record_title">폴더 %1$s (%2$d개 파일)</string>
+    <string name="folder_notif_text">%1$s (%2$d개 파일)</string>
+
+    <!-- Transfer limit -->
+    <string name="limit_unlimited">무제한</string>
+
+    <!-- Errors -->
+    <string name="error_not_connected">연결되지 않음</string>
+    <string name="error_connection_failed">연결 실패</string>
+</resources>

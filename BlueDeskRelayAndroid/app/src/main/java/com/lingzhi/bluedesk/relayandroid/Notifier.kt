@@ -46,7 +46,7 @@ object Notifier {
         return NotificationCompat.Builder(context, CH_CONNECTION)
             .setSmallIcon(R.drawable.ic_stat_relay)
             .setContentTitle("BlueDesk Relay")
-            .setContentText(state.describe())
+            .setContentText(state.describe(context))
             .setContentIntent(openApp(context))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -59,7 +59,7 @@ object Notifier {
     fun receivedText(context: Context, text: String) {
         val notification = NotificationCompat.Builder(context, CH_RECEIVED)
             .setSmallIcon(R.drawable.ic_stat_relay)
-            .setContentTitle("收到文字")
+            .setContentTitle(context.getString(R.string.notif_received_text))
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setContentIntent(openApp(context))
@@ -86,7 +86,7 @@ object Notifier {
         )
         val notification = NotificationCompat.Builder(context, CH_RECEIVED)
             .setSmallIcon(R.drawable.ic_stat_relay)
-            .setContentTitle("收到文件")
+            .setContentTitle(context.getString(R.string.notif_received_file))
             .setContentText(name)
             .setContentIntent(pending)
             .setAutoCancel(true)
@@ -113,10 +113,10 @@ object Notifier {
             viewIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val text = "$name（$files 个文件）"
+        val text = context.getString(R.string.folder_notif_text, name, files)
         val notification = NotificationCompat.Builder(context, CH_RECEIVED)
             .setSmallIcon(R.drawable.ic_stat_relay)
-            .setContentTitle("已接收文件夹")
+            .setContentTitle(context.getString(R.string.notif_received_folder))
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setContentIntent(pending)
