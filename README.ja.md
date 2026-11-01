@@ -1,11 +1,15 @@
 <p align="center">
-  <img src="icon.png" width="120" height="120" alt="BlueDesk アプリアイコン">
+  <img src="bluedesk-icon.png" width="120" height="120" alt="BlueDesk アプリアイコン">
 </p>
 
 <h1 align="center">BlueDesk</h1>
 
 <p align="center">
-  <b>リレー</b> · 3 プラットフォーム向けコンパニオンアプリ（Windows / Android / macOS）
+  <b>メインアプリ</b>：BlueDesk（Android）
+</p>
+
+<p align="center">
+  リレー · 3 プラットフォーム向けコンパニオンアプリ（Windows / Android / macOS）
 </p>
 
 <p align="center">

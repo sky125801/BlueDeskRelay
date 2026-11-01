@@ -1,11 +1,15 @@
 <p align="center">
-  <img src="icon.png" width="120" height="120" alt="BlueDesk app icon">
+  <img src="bluedesk-icon.png" width="120" height="120" alt="BlueDesk app icon">
 </p>
 
 <h1 align="center">BlueDesk</h1>
 
 <p align="center">
-  <b>Relay Companion</b> · three-platform helper apps (Windows / Android / macOS)
+  <b>Main app</b>: BlueDesk (Android)
+</p>
+
+<p align="center">
+  Relay Companion · three-platform helper apps (Windows / Android / macOS)
 </p>
 
 <p align="center">

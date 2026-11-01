@@ -1,11 +1,15 @@
 <p align="center">
-  <img src="icon.png" width="120" height="120" alt="BlueDesk 应用图标">
+  <img src="bluedesk-icon.png" width="120" height="120" alt="BlueDesk 应用图标">
 </p>
 
 <h1 align="center">BlueDesk</h1>
 
 <p align="center">
-  <b>互传助手</b> · 三端辅助程序（Windows / Android / macOS）
+  <b>主应用</b>：BlueDesk（Android）
+</p>
+
+<p align="center">
+  互传助手 · 三端辅助程序（Windows / Android / macOS）
 </p>
 
 <p align="center">

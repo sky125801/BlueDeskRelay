@@ -1,11 +1,15 @@
 <p align="center">
-  <img src="icon.png" width="120" height="120" alt="BlueDesk 앱 아이콘">
+  <img src="bluedesk-icon.png" width="120" height="120" alt="BlueDesk 앱 아이콘">
 </p>
 
 <h1 align="center">BlueDesk</h1>
 
 <p align="center">
-  <b>릴레이</b> · 3개 플랫폼용 보조 앱 (Windows / Android / macOS)
+  <b>메인 앱</b>: BlueDesk (Android)
+</p>
+
+<p align="center">
+  릴레이 · 3개 플랫폼용 보조 앱 (Windows / Android / macOS)
 </p>
 
 <p align="center">
