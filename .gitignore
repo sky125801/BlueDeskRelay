@@ -24,7 +24,9 @@ BlueDeskRelayWindows/**/bin/
 BlueDeskRelayWindows/**/obj/
 
 # ---- 发布产物 ----
-# 只保留最终安装包（dist/*.apk、dist/*.zip），中间解包目录不入库
+# 安装包统一发到 GitHub Release，不入库；本目录只保留说明文档
+dist/*.apk
+dist/*.zip
 dist/win-publish/
 
 # ---- misc ----
