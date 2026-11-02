@@ -5,6 +5,7 @@ BlueDeskRelayAndroid/build/
 BlueDeskRelayAndroid/local.properties
 BlueDeskRelayAndroid/*.iml
 BlueDeskRelayAndroid/.idea/
+BlueDeskRelayAndroid/.kotlin/
 
 # ---- macOS (Swift / Xcode) ----
 BlueDeskRelayMac/.build/
@@ -12,6 +13,9 @@ BlueDeskRelayMac/DerivedData/
 BlueDeskRelayMac/*.xcodeproj/xcuserdata/
 BlueDeskRelayMac/*.xcworkspace/xcuserdata/
 BlueDeskRelayMac/Packages/
+# 打包产物不入库：本地 ./bundle.sh 生成
+BlueDeskRelayMac/*.app/
+BlueDeskRelayMac/*.dSYM/
 
 # ---- Windows (.NET / C#) ----
 BlueDeskRelayWindows/bin/
@@ -25,3 +29,4 @@ dist/win-publish/
 
 # ---- misc ----
 .workbuddy-ai/
+.DS_Store

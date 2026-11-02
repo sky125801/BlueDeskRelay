@@ -44,6 +44,8 @@ cd BlueDeskRelayMac
 
 只想出命令行可执行文件：`swift build -c release`（产物 `.build/release/BlueDeskRelayMac`）。
 
+> `BlueDesk Relay.app` 与 `.build/` 都是构建产物，不入库（见仓库根 `.gitignore`），需要时本地 `./bundle.sh` 生成。
+
 ## 使用步骤
 
 1. **配对**：系统设置 → 蓝牙，与手机（BlueDesk-XXXXXX）配对一次。
