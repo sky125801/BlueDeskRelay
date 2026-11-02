@@ -131,7 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                            EventParamName(kEventParamDirectObject),
                                            EventParamType(typeEventHotKeyID),
                                            nil,
-                                           UInt32(MemoryLayout<EventHotKeyID>.size),
+                                           MemoryLayout<EventHotKeyID>.size,
                                            nil,
                                            &hotKeyID)
             guard status == noErr else { return status }

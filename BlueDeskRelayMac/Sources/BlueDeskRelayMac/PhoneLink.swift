@@ -31,6 +31,9 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     private var parser = Protocol.Parser()
     private var assembler: FileAssembler?
     private var phoneDevice: IOBluetoothDevice?
+    /// 正在连接中的目标（连接是多步异步的：先 page 经典蓝牙 ACL，再开 RFCOMM）
+    private var pendingDevice: IOBluetoothDevice?
+    private var connectAttempt = 0
 
     var receiveDirectory: URL {
         let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
@@ -46,12 +49,17 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     // MARK: - 连接管理
 
     /// 已配对设备列表（供手动选择菜单展示）：(名称, MAC 地址)
+    /// 同一台手机可能出现多个配对实例（BR/EDR 与 LE 各一条），按地址去重，避免菜单里出现重复项。
     func pairedDeviceList() -> [(name: String, address: String)] {
         let devices = (IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice]) ?? []
-        return devices.compactMap { device in
-            guard let address = device.addressString else { return nil }
-            return (device.name ?? address, address)
+        var seen = Set<String>()
+        var result: [(name: String, address: String)] = []
+        for device in devices {
+            guard let address = device.addressString, !seen.contains(address) else { continue }
+            seen.insert(address)
+            result.append((device.name ?? address, address))
         }
+        return result
     }
 
     /// 手动选择的目标设备地址（持久化；重启后自动优先连它）
@@ -68,7 +76,7 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     /// 自动连接：优先记忆设备 → BlueDesk* 命名 → 任何提供中转服务的配对设备
     func connect() {
         assert(Thread.isMainThread)
-        guard !isConnected, channel == nil else { return }
+        guard !isConnected, channel == nil, pendingDevice == nil else { return }
 
         let devices = (IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice]) ?? []
 
@@ -116,15 +124,27 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     /// 连接指定设备（主线程调用）——「连接设备」菜单的手动入口
     func connect(to device: IOBluetoothDevice) {
         assert(Thread.isMainThread)
-        guard !isConnected, channel == nil else { return }
+        guard !isConnected, channel == nil, pendingDevice == nil else { return }
+        pendingDevice = device
+        connectAttempt = 0
+        attemptOpenRelay()
+    }
 
-        let phone = device
-        guard let address = phone.addressString else {
+    /// 真正打开 RFCOMM；失败时先主动 page 一次经典蓝牙 ACL，等链路建立后重试。
+    ///
+    /// 关键点：同一台手机对 Mac 同时以 LE(GATT) 与 BR/EDR 两种身份存在。只有 LE 链路时
+    /// `openRFCOMMChannelSync` 会立刻返回 kIOReturnError（0xe00002bc），且它自己不会去
+    /// page 手机；必须先 `openConnection()` 把经典蓝牙 ACL 拉起来，链路建立后再开 RFCOMM。
+    private func attemptOpenRelay() {
+        guard let phone = pendingDevice, let address = phone.addressString else {
+            pendingDevice = nil
             NSLog("[PhoneLink] 目标设备无有效地址")
             return
         }
+        connectAttempt += 1
 
         guard let channelID = relayChannelID(of: phone) else {
+            pendingDevice = nil
             NSLog("[PhoneLink] 「\(phone.name ?? address)」未注册中转服务（手机端中转页需先开启服务）")
             onError?(L10n.t("error.noRelayService", phone.name ?? address))
             return
@@ -132,24 +152,42 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
 
         var newChannel: IOBluetoothRFCOMMChannel?
         let status = phone.openRFCOMMChannelSync(&newChannel, withChannelID: channelID, delegate: self)
-        guard status == kIOReturnSuccess, let opened = newChannel else {
-            NSLog("[PhoneLink] 打开 RFCOMM 通道失败：0x\(String(status, radix: 16))")
+        if status == kIOReturnSuccess, let opened = newChannel {
+            pendingDevice = nil
+            channel = opened
+            phoneDevice = phone
+            phoneName = phone.name ?? "BlueDesk"
+            connectedAddress = address
+            isConnected = true
+            parser = Protocol.Parser()
+            preferredAddress = address          // 记住手动选择，重启/重连优先用它
+            onStateChange?(true, phoneName)
+
+            // 报身份
+            sendFrame(Protocol.hello(localName))
+            NSLog("[PhoneLink] 已连接 \(phoneName)（RFCOMM 通道 \(channelID)，第 \(connectAttempt) 次尝试）")
+            return
+        }
+
+        NSLog("[PhoneLink] 第 \(connectAttempt) 次打开 RFCOMM 失败：0x\(String(status, radix: 16))（isConnected=\(phone.isConnected())）")
+
+        guard connectAttempt < 3 else {
+            pendingDevice = nil
             onError?(L10n.t("error.connectFailed", phone.name ?? address))
             return
         }
 
-        channel = opened
-        phoneDevice = phone
-        phoneName = phone.name ?? "BlueDesk"
-        connectedAddress = address
-        isConnected = true
-        parser = Protocol.Parser()
-        preferredAddress = address          // 记住手动选择，重启/重连优先用它
-        onStateChange?(true, phoneName)
-
-        // 报身份
-        sendFrame(Protocol.hello(localName))
-        NSLog("[PhoneLink] 已连接 \(phoneName)（RFCOMM 通道 \(channelID)）")
+        // 主动把经典蓝牙 ACL 拉起来（只有 LE 链路时 RFCOMM 必然失败）
+        if !phone.isConnected() {
+            let open = phone.openConnection()
+            NSLog("[PhoneLink] 主动建立经典蓝牙链路：0x\(String(open, radix: 16))")
+        }
+        let delay: TimeInterval = connectAttempt == 1 ? 2.5 : 5
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, !self.isConnected,
+                  self.pendingDevice?.addressString == address else { return }
+            self.attemptOpenRelay()
+        }
     }
 
     /// 按地址查找已配对设备（菜单点击后还原目标）
@@ -159,6 +197,8 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     }
 
     func disconnect() {
+        pendingDevice = nil
+        connectAttempt = 0
         guard isConnected else { return }
         isConnected = false
         connectedAddress = nil
@@ -177,6 +217,7 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
 
     /// 定时重连入口（状态未连接时尝试一次）
     func ensureConnected() {
+        if pendingDevice != nil { return }   // 正在多步连接中，别打断
         if !isConnected { connect() }
     }
 

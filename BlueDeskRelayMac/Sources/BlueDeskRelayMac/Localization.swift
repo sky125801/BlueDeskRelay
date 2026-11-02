@@ -77,7 +77,7 @@ enum L10n {
             "error.metaParseFailed": "文件元信息解析失败",
             "error.saveFailed": "保存文件失败：%@",
             "error.noRelayService": "「%@」未提供中转服务，请在手机上打开 BlueDesk → 中转 → 开启中转服务",
-            "error.connectFailed": "连接「%@」失败（请确认手机端中转服务已开启）",
+            "error.connectFailed": "连接「%@」失败：经典蓝牙链路未建立。请确认手机蓝牙已开、手机端「互传」已开启后重试",
 
             "clipboard.empty": "剪贴板为空",
             "clipboard.emptyHint": "先复制一段文字再发送",
@@ -141,7 +141,7 @@ enum L10n {
             "error.metaParseFailed": "Failed to parse file metadata",
             "error.saveFailed": "Failed to save file: %@",
             "error.noRelayService": "\"%@\" does not provide the relay service. Open BlueDesk on your phone, go to Relay and turn on the service.",
-            "error.connectFailed": "Failed to connect to \"%@\" (make sure the relay service is enabled on your phone)",
+            "error.connectFailed": "Failed to connect to \"%@\": the classic Bluetooth link did not come up. Check that Bluetooth is on and Relay is enabled on your phone.",
 
             "clipboard.empty": "Clipboard is empty",
             "clipboard.emptyHint": "Copy some text first before sending",
@@ -205,7 +205,7 @@ enum L10n {
             "error.metaParseFailed": "ファイルのメタ情報を解析できません",
             "error.saveFailed": "ファイルの保存に失敗しました：%@",
             "error.noRelayService": "「%@」はリレーサービスを提供していません。スマホで BlueDesk を開き、「リレー」でサービスを有効にしてください",
-            "error.connectFailed": "「%@」への接続に失敗しました（スマホ側のリレーサービスが有効か確認してください）",
+            "error.connectFailed": "「%@」への接続に失敗しました：クラシックBluetoothリンクが確立できません。スマホのBluetoothとリレーが有効か確認してください",
 
             "clipboard.empty": "クリップボードが空です",
             "clipboard.emptyHint": "テキストをコピーしてから送信してください",
@@ -269,7 +269,7 @@ enum L10n {
             "error.metaParseFailed": "파일 메타 정보를 분석하지 못했습니다",
             "error.saveFailed": "파일 저장 실패: %@",
             "error.noRelayService": "\"%@\"이(가) 릴레이 서비스를 제공하지 않습니다. 폰에서 BlueDesk를 열고 '릴레이'에서 서비스를 켜세요",
-            "error.connectFailed": "\"%@\" 연결 실패 (폰의 릴레이 서비스가 켜져 있는지 확인하세요)",
+            "error.connectFailed": "\"%@\" 연결 실패: 클래식 Bluetooth 링크가 연결되지 않았습니다. 폰의 Bluetooth와 릴레이가 켜져 있는지 확인하세요",
 
             "clipboard.empty": "클립보드가 비어 있습니다",
             "clipboard.emptyHint": "텍스트를 먼저 복사한 후 전송하세요",
