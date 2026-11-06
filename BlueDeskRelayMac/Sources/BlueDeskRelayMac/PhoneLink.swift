@@ -94,18 +94,29 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
             return
         }
 
-        // 3) 兜底：手机可能显示真实机型名（如 SM-S9380），按 SDP 中转服务扫描
-        //    为避免卡顿，每次自动连接只尝试一台（轮换）。
-        let candidates = devices.filter { $0.addressString != lastAutoTriedAddress }
-        for device in candidates {
-            if let channelID = relayChannelID(of: device) {
+        // 3) 兜底：手机可能显示真实机型名（如 SM-S9380），按 SDP 中转服务扫描。
+        //    SDP 查询会阻塞，放到后台线程避免卡主线程 UI。
+        let skipAddr = lastAutoTriedAddress
+        let candidates = devices.filter { $0.addressString != skipAddr }
+        NSLog("[PhoneLink] 后台 SDP 扫描 \(candidates.count) 台设备…")
+        DispatchQueue.global(qos: .utility).async {
+            for device in candidates {
+                guard let addr = device.addressString else { continue }
+                let sdpUUID = IOBluetoothSDPUUID(
+                    bytes: withUnsafeBytes(of: Protocol.serviceUUID.uuid) { Array($0) }, length: 16)
+                guard let record = device.getServiceRecord(for: sdpUUID) else { continue }
+                var channelID: BluetoothRFCOMMChannelID = 0
+                guard record.getRFCOMMChannelID(&channelID) == kIOReturnSuccess else { continue }
+
                 NSLog("[PhoneLink] 自动发现「\(device.name ?? "?")」提供中转服务")
-                lastAutoTriedAddress = device.addressString
-                connect(to: device)
+                DispatchQueue.main.async {
+                    self.lastAutoTriedAddress = addr
+                    self.connect(to: device)
+                }
                 return
             }
+            NSLog("[PhoneLink] 未发现提供中转服务的已配对设备（确认手机端中转服务已开启）")
         }
-        NSLog("[PhoneLink] 未发现提供中转服务的已配对设备（确认手机端中转服务已开启）")
     }
 
     /// 上次自动发现尝试过的地址（无服务设备不反复查 SDP）
@@ -240,27 +251,33 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
             onError?(L10n.t("error.readFileFailed"))
             return
         }
-        sendFrame(Protocol.fileMeta(name: url.lastPathComponent, size: bytes.count))
-        var offset = 0
-        while offset < bytes.count {
-            let len = min(Protocol.maxChunk, bytes.count - offset)
-            sendFrame(Protocol.chunk(bytes, offset: offset, length: len))
-            offset += len
+        let chunkSize = Protocol.maxChunk
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            self.sendFrame(Protocol.fileMeta(name: url.lastPathComponent, size: bytes.count))
+
+            var offset = 0
+            while offset < bytes.count {
+                let len = min(chunkSize, bytes.count - offset)
+                self.sendFrame(Protocol.chunk(bytes, offset: offset, length: len))
+                offset += len
+            }
+
+            self.sendFrame(Protocol.fileEnd())
         }
-        sendFrame(Protocol.fileEnd())
     }
 
     private func sendFrame(_ frame: Protocol.Frame) {
-        guard let channel else { return }
         let data = Protocol.encode(frame)
         guard data.count <= Int(UInt16.max) else {
             NSLog("[PhoneLink] 帧过大 \(data.count) 字节，已丢弃")
             return
         }
+        guard let ch = channel else { return }
         let status = data.withUnsafeBytes { raw -> IOReturn in
             guard let base = raw.baseAddress else { return kIOReturnError }
-            return channel.writeSync(UnsafeMutableRawPointer(mutating: base),
-                                     length: UInt16(data.count))
+            return ch.writeSync(UnsafeMutableRawPointer(mutating: base),
+                                length: UInt16(data.count))
         }
         if status != kIOReturnSuccess {
             NSLog("[PhoneLink] 写入失败：0x\(String(status, radix: 16))")

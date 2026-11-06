@@ -109,11 +109,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.notify(L10n.t("app.name"), message)
         }
 
-        // 自动连接 + 断线重连
+        // 自动连接 + 断线重连（加 common mode，拖菜单时不暂停）
         link.connect()
         reconnectTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             self?.link.ensureConnected()
         }
+        RunLoop.main.add(reconnectTimer!, forMode: .common)
     }
 
     // MARK: - 全局热键

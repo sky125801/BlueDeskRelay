@@ -153,13 +153,26 @@ enum Protocol {
 
     // MARK: - 工具
 
-    static func crc32(_ data: Data) -> UInt32 {
-        // 标准 CRC-32（与 java.util.zip.CRC32 / C# Crc32 一致）
-        var result: UInt32 = 0xFFFFFFFF
-        for byte in data {
-            result ^= UInt32(byte)
+    // MARK: - CRC32（查表法，与 java.util.zip.CRC32 / C# Crc32 一致）
+
+    private static let crcTable: [UInt32] = {
+        var table = [UInt32](repeating: 0, count: 256)
+        for n in 0..<256 {
+            var c = UInt32(n)
             for _ in 0..<8 {
-                result = (result & 1) != 0 ? (0xEDB88320 ^ (result >> 1)) : (result >> 1)
+                c = (c & 1) != 0 ? (0xEDB88320 ^ (c >> 1)) : (c >> 1)
+            }
+            table[n] = c
+        }
+        return table
+    }()
+
+    static func crc32(_ data: Data) -> UInt32 {
+        var result: UInt32 = 0xFFFFFFFF
+        data.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            for i in 0..<data.count {
+                result = crcTable[Int((result ^ UInt32(base[i])) & 0xFF)] ^ (result >> 8)
             }
         }
         return result ^ 0xFFFFFFFF
