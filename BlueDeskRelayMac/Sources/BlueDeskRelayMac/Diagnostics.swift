@@ -113,6 +113,12 @@ enum Diagnostics {
                 var ch: BluetoothRFCOMMChannelID = 0
                 _ = record.getRFCOMMChannelID(&ch)
                 out("    [2.2] 刷新后中转服务：channel=\(ch)  name=\(record.getServiceName() ?? "?")")
+                // 缓存 miss 但刷新后找到的，补进 targets（否则下面 [3] 会误报"没有目标"）
+                let already = targets.contains { $0.device === instances[0] }
+                if !already {
+                    targets.append((instances[0], ch, label))
+                    out("    [2.2] ↑ 缓存 miss，刷新后补入 targets")
+                }
             } else {
                 out("    [2.2] 刷新后仍无中转服务记录")
             }

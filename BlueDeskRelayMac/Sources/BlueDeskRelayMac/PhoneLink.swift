@@ -123,12 +123,31 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     private var lastAutoTriedAddress: String?
 
     /// 查询设备的 RFCOMM 中转服务通道号；无服务返回 nil
+    ///
+    /// 先读 SDP 缓存（快），缓存 miss 时主动 `performSDPQuery` 刷新再查。
+    /// macOS 的 SDP 缓存在手机端服务重启后会过期，不刷新会导致永远找不到服务。
     private func relayChannelID(of device: IOBluetoothDevice) -> BluetoothRFCOMMChannelID? {
         let sdpUUID = IOBluetoothSDPUUID(
             bytes: withUnsafeBytes(of: Protocol.serviceUUID.uuid) { Array($0) }, length: 16)
+
+        // 1) 缓存命中
+        if let record = device.getServiceRecord(for: sdpUUID) {
+            var channelID: BluetoothRFCOMMChannelID = 0
+            guard record.getRFCOMMChannelID(&channelID) == kIOReturnSuccess else { return nil }
+            return channelID
+        }
+
+        // 2) 缓存 miss → 强制刷新 SDP 再查（阻塞调用，但调用方已在后台线程或菜单手动入口）
+        NSLog("[PhoneLink] SDP 缓存 miss，刷新 \(device.name ?? "?") 的服务记录…")
+        _ = device.performSDPQuery(nil)
+
+        // performSDPQuery 是异步的，等一下让结果落地
+        Thread.sleep(forTimeInterval: 2)
+
         guard let record = device.getServiceRecord(for: sdpUUID) else { return nil }
         var channelID: BluetoothRFCOMMChannelID = 0
-        record.getRFCOMMChannelID(&channelID)
+        guard record.getRFCOMMChannelID(&channelID) == kIOReturnSuccess else { return nil }
+        NSLog("[PhoneLink] SDP 刷新后找到中转服务 channel=\(channelID)")
         return channelID
     }
 
@@ -146,6 +165,8 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     /// 关键点：同一台手机对 Mac 同时以 LE(GATT) 与 BR/EDR 两种身份存在。只有 LE 链路时
     /// `openRFCOMMChannelSync` 会立刻返回 kIOReturnError（0xe00002bc），且它自己不会去
     /// page 手机；必须先 `openConnection()` 把经典蓝牙 ACL 拉起来，链路建立后再开 RFCOMM。
+    ///
+    /// SDP 查询（含可能的 performSDPQuery 刷新）放到后台线程，避免 Thread.sleep 卡主线程。
     private func attemptOpenRelay() {
         guard let phone = pendingDevice, let address = phone.addressString else {
             pendingDevice = nil
@@ -154,50 +175,58 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
         }
         connectAttempt += 1
 
-        guard let channelID = relayChannelID(of: phone) else {
-            pendingDevice = nil
-            NSLog("[PhoneLink] 「\(phone.name ?? address)」未注册中转服务（手机端中转页需先开启服务）")
-            onError?(L10n.t("error.noRelayService", phone.name ?? address))
-            return
-        }
+        let attempt = connectAttempt
+        DispatchQueue.global(qos: .userInitiated).async {
+            // SDP 查询（可能触发 performSDPQuery + Thread.sleep，在后台执行）
+            guard let channelID = self.relayChannelID(of: phone) else {
+                DispatchQueue.main.async {
+                    self.pendingDevice = nil
+                    NSLog("[PhoneLink] 「\(phone.name ?? address)」未注册中转服务（手机端中转页需先开启服务）")
+                    self.onError?(L10n.t("error.noRelayService", phone.name ?? address))
+                }
+                return
+            }
 
-        var newChannel: IOBluetoothRFCOMMChannel?
-        let status = phone.openRFCOMMChannelSync(&newChannel, withChannelID: channelID, delegate: self)
-        if status == kIOReturnSuccess, let opened = newChannel {
-            pendingDevice = nil
-            channel = opened
-            phoneDevice = phone
-            phoneName = phone.name ?? "BlueDesk"
-            connectedAddress = address
-            isConnected = true
-            parser = Protocol.Parser()
-            preferredAddress = address          // 记住手动选择，重启/重连优先用它
-            onStateChange?(true, phoneName)
+            // 开 RFCOMM（writeSync 本身线程安全）
+            var newChannel: IOBluetoothRFCOMMChannel?
+            let status = phone.openRFCOMMChannelSync(&newChannel, withChannelID: channelID, delegate: self)
 
-            // 报身份
-            sendFrame(Protocol.hello(localName))
-            NSLog("[PhoneLink] 已连接 \(phoneName)（RFCOMM 通道 \(channelID)，第 \(connectAttempt) 次尝试）")
-            return
-        }
+            DispatchQueue.main.async {
+                if status == kIOReturnSuccess, let opened = newChannel {
+                    self.pendingDevice = nil
+                    self.channel = opened
+                    self.phoneDevice = phone
+                    self.phoneName = phone.name ?? "BlueDesk"
+                    self.connectedAddress = address
+                    self.isConnected = true
+                    self.parser = Protocol.Parser()
+                    self.preferredAddress = address
+                    self.onStateChange?(true, self.phoneName)
+                    self.sendFrame(Protocol.hello(self.localName))
+                    NSLog("[PhoneLink] 已连接 \(self.phoneName)（RFCOMM 通道 \(channelID)，第 \(attempt) 次尝试）")
+                    return
+                }
 
-        NSLog("[PhoneLink] 第 \(connectAttempt) 次打开 RFCOMM 失败：0x\(String(status, radix: 16))（isConnected=\(phone.isConnected())）")
+                NSLog("[PhoneLink] 第 \(attempt) 次打开 RFCOMM 失败：0x\(String(status, radix: 16))（isConnected=\(phone.isConnected())）")
 
-        guard connectAttempt < 3 else {
-            pendingDevice = nil
-            onError?(L10n.t("error.connectFailed", phone.name ?? address))
-            return
-        }
+                guard self.connectAttempt < 3 else {
+                    self.pendingDevice = nil
+                    self.onError?(L10n.t("error.connectFailed", phone.name ?? address))
+                    return
+                }
 
-        // 主动把经典蓝牙 ACL 拉起来（只有 LE 链路时 RFCOMM 必然失败）
-        if !phone.isConnected() {
-            let open = phone.openConnection()
-            NSLog("[PhoneLink] 主动建立经典蓝牙链路：0x\(String(open, radix: 16))")
-        }
-        let delay: TimeInterval = connectAttempt == 1 ? 2.5 : 5
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self, !self.isConnected,
-                  self.pendingDevice?.addressString == address else { return }
-            self.attemptOpenRelay()
+                // 主动把经典蓝牙 ACL 拉起来（只有 LE 链路时 RFCOMM 必然失败）
+                if !phone.isConnected() {
+                    let open = phone.openConnection()
+                    NSLog("[PhoneLink] 主动建立经典蓝牙链路：0x\(String(open, radix: 16))")
+                }
+                let delay: TimeInterval = self.connectAttempt == 1 ? 2.5 : 5
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    guard let self, !self.isConnected,
+                          self.pendingDevice?.addressString == address else { return }
+                    self.attemptOpenRelay()
+                }
+            }
         }
     }
 
