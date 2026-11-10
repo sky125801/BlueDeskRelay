@@ -15,6 +15,9 @@ enum Protocol {
     static let headerSize = 11
     static let maxChunk = 4 * 1024
 
+    /// `writeSync` 单次写入不得超出 RFCOMM 通道 MTU；拿不到 MTU 时用这个保守值。
+    static let fallbackMTU = 990
+
     /// 与手机端 TransferProtocol.SERVICE_UUID 一致
     static let serviceUUID = UUID(uuidString: "a3bd7f2e-5c14-4a9e-9d1b-2f6e8c04bde1")!
 
@@ -31,6 +34,10 @@ enum Protocol {
         static let config: UInt8 = 0x0A
         static let batchMeta: UInt8 = 0x0B
         static let batchEnd: UInt8 = 0x0C
+        /// 网络端点（手机 → PC）：{"port":47654,"ips":["192.168.1.23"],"name":"BlueDesk-A1B2C3"}
+        static let netInfo: UInt8 = 0x0D
+        /// 身份补充（PC → 手机）：{"id":"uuid","bt":"AA:BB:..","platform":"mac","transport":"tcp"}
+        static let ident: UInt8 = 0x0E
     }
 
     static let flagNeedAck: UInt8 = 0x01
@@ -81,6 +88,11 @@ enum Protocol {
         Frame(type: FrameType.fileChunk, payload: data.subdata(in: offset..<offset + length))
     }
 
+    /// 已是切片数据的便捷入口（发送端按块从磁盘流式读取时用）
+    static func chunk(_ data: Data) -> Frame {
+        Frame(type: FrameType.fileChunk, payload: data)
+    }
+
     static func fileEnd(needAck: Bool = true) -> Frame {
         Frame(type: FrameType.fileEnd, payload: Data(), needAck: needAck)
     }
@@ -97,9 +109,22 @@ enum Protocol {
         Frame(type: FrameType.error, payload: Data(message.utf8))
     }
 
+    /// NET_INFO（手机下发的 TCP 数据通道端点）
+    static func netInfo(_ json: String) -> Frame {
+        Frame(type: FrameType.netInfo, payload: Data(json.utf8))
+    }
+
+    /// IDENT（PC 补报稳定标识，走 TCP 时用于把会话还原成同一台 PC）
+    static func ident(_ json: String) -> Frame {
+        Frame(type: FrameType.ident, payload: Data(json.utf8))
+    }
+
     // MARK: - 解析（流式喂入，产出完整帧）
 
-    /// 增量解析器：IOBluetooth 回调给的 data 可能是任意切割，先攒后切
+    /// 增量解析器：IOBluetooth 回调给的 data 可能是任意切割，先攒后切。
+    ///
+    /// 只记录已消费的偏移，最后一次性裁掉前缀 —— 旧实现每帧都 `removeSubrange`，
+    /// 收几 MB 文件时是 O(n²) 的拷贝，会把跑回调的主线程拖住。
     struct Parser {
         private(set) var buffer = Data()
         private var parsingError: String?
@@ -107,30 +132,33 @@ enum Protocol {
         mutating func feed(_ data: Data) -> [Frame] {
             buffer.append(data)
             var frames: [Frame] = []
-            while true {
-                guard buffer.count >= headerSize else { break }
-                let head = buffer.prefix(headerSize)
-                guard head[0] == 0xBD, head[1] == 0x54 else {
+            let start = buffer.startIndex
+            let available = buffer.count
+            var consumed = 0
+
+            while available - consumed >= headerSize {
+                let base = start + consumed
+                guard buffer[base] == 0xBD, buffer[base + 1] == 0x54 else {
                     parsingError = "坏帧：MAGIC 不匹配"
                     break
                 }
-                guard head[2] == 0x01 else {
-                    parsingError = "坏帧：协议版本不支持 v\(head[2])"
+                guard buffer[base + 2] == 0x01 else {
+                    parsingError = "坏帧：协议版本不支持 v\(buffer[base + 2])"
                     break
                 }
-                let type = head[3]
-                let needAck = (head[4] & flagNeedAck) != 0
-                let len = Int(head[5]) << 24 | Int(head[6]) << 16 | Int(head[7]) << 8 | Int(head[8])
+                let type = buffer[base + 3]
+                let needAck = (buffer[base + 4] & flagNeedAck) != 0
+                let len = Int(buffer[base + 5]) << 24 | Int(buffer[base + 6]) << 16
+                    | Int(buffer[base + 7]) << 8 | Int(buffer[base + 8])
                 guard len >= 0, len <= 16 * 1024 * 1024 else {
                     parsingError = "坏帧：载荷长度异常 \(len)"
                     break
                 }
-                let crc = Int(head[9]) << 8 | Int(head[10])
-                guard buffer.count >= headerSize + len else { break }   // 等更多数据
+                let crc = Int(buffer[base + 9]) << 8 | Int(buffer[base + 10])
+                guard available - consumed >= headerSize + len else { break }   // 等更多数据
 
-                let payloadStart = buffer.index(buffer.startIndex, offsetBy: headerSize)
-                let payloadEnd = buffer.index(payloadStart, offsetBy: len)
-                let payload = buffer.subdata(in: payloadStart..<payloadEnd)
+                let payloadStart = base + headerSize
+                let payload = buffer.subdata(in: payloadStart..<(payloadStart + len))
 
                 if len > 0 {
                     let actual = Int(crc32(payload) & 0xFFFF)
@@ -140,12 +168,15 @@ enum Protocol {
                     }
                 }
                 frames.append(Frame(type: type, payload: payload, needAck: needAck))
-                buffer.removeSubrange(buffer.startIndex..<payloadEnd)
+                consumed += headerSize + len
             }
+
             if let err = parsingError {
                 NSLog("[Protocol] \(err)")
                 parsingError = nil
                 buffer.removeAll()
+            } else if consumed > 0 {
+                buffer.removeSubrange(start..<(start + consumed))
             }
             return frames
         }
@@ -194,7 +225,8 @@ final class FileAssembler {
     func begin(name: String, size: Int) {
         self.name = name
         expectedSize = size
-        buffer.removeAll()
+        buffer.removeAll(keepingCapacity: true)
+        buffer.reserveCapacity(max(0, min(size, 8 * 1024 * 1024)))
         received = 0
     }
 

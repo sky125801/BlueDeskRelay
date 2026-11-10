@@ -69,6 +69,10 @@ internal static class Strings
     public static string PreferredCleared => Get("已清除记忆", "Preferred device cleared", "記憶をクリアしました", "선호 기기가 삭제됨");
     public static string PreferredClearedBody => Get("下次将自动连接第一台 BlueDesk 手机", "Will auto-connect to the first BlueDesk phone next time", "次回は最初のBlueDeskスマホに自動接続します", "다음에는 첫 번째 BlueDesk 폰에 자동 연결됩니다");
 
+    // Wi-Fi 数据通道
+    public static string TransportFormat => Get("已连接 {0} · {1}", "Connected {0} · {1}", "接続済み {0} · {1}", "연결됨 {0} · {1}");
+    public static string Cancel => Get("取消", "Cancel", "キャンセル", "취소");
+
     // Send
     public static string NotConnectedTryAgain => Get("正在连接手机，稍后重试", "Connecting to phone, try again shortly", "スマホに接続中です。後で再試行してください。", "폰에 연결 중입니다. 잠시 후 재시도하세요.");
     public static string ClipboardEmpty => Get("剪贴板为空", "Clipboard is empty", "クリップボードが空です", "클립보드가 비어 있음");

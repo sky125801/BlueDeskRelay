@@ -14,6 +14,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- Wi-Fi 数据通道：本端作为 TCP 客户端连手机的监听端口 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:name=".RelayApplication"
         android:allowBackup="true"

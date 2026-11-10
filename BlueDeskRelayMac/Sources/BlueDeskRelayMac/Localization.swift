@@ -49,6 +49,7 @@ enum L10n {
             "status.connected": "已连接 %@",
             "status.notConnected": "未连接（自动重连中）",
             "status.phoneDisconnected": "手机连接已断开",
+            "status.connectedTransport": "已连接 %@ · %@",
 
             "menu.connectDevice": "连接设备",
             "menu.disconnect": "断开连接",
@@ -56,6 +57,7 @@ enum L10n {
             "menu.sendFile": "发送文件…",
             "menu.sendFinderSelection": "发送 Finder 选中的文件 (Ctrl+Opt+F)",
             "menu.quit": "退出",
+            "common.cancel": "取消",
 
             "connect.noDevices": "无已配对设备（先在系统设置→蓝牙配对）",
             "connect.preferred": "★ %@（记忆）",
@@ -78,6 +80,9 @@ enum L10n {
             "error.saveFailed": "保存文件失败：%@",
             "error.noRelayService": "「%@」未提供中转服务，请在手机上打开 BlueDesk → 中转 → 开启中转服务",
             "error.connectFailed": "连接「%@」失败：经典蓝牙链路未建立。请确认手机蓝牙已开、手机端「互传」已开启后重试",
+            "error.sendInterrupted": "传输中断：手机连接已断开，请重连后重新发送",
+            "error.exceedsPhoneLimit": "超过手机端传输上限 %@，未发送",
+            "error.phoneRejected": "手机端返回错误：%@",
 
             "clipboard.empty": "剪贴板为空",
             "clipboard.emptyHint": "先复制一段文字再发送",
@@ -86,6 +91,8 @@ enum L10n {
             "send.sentBody": "%ld 字符已交给手机",
             "send.sending": "发送中",
             "send.sendingBody": "%@ 传输中…",
+            "file.sent": "文件已发送",
+            "file.sentBody": "%@（%@）已交给手机",
 
             "file.tooLarge": "文件过大",
             "file.tooLargeLimit": "单文件上限 64 MB",
@@ -100,6 +107,8 @@ enum L10n {
 
             "file.received": "收到文件",
             "file.receivedBody": "%@（%@）已保存到 Downloads/BlueDesk",
+            "folder.received": "收到文件夹",
+            "folder.receivedBody": "%@（%ld 个文件）已保存到 Downloads/BlueDesk",
             "text.received": "收到文本",
             "text.receivedBody": "已写入剪贴板（%ld 字符），可直接 Cmd+V",
 
@@ -113,6 +122,7 @@ enum L10n {
             "status.connected": "Connected to %@",
             "status.notConnected": "Not connected (reconnecting)",
             "status.phoneDisconnected": "Phone connection lost",
+            "status.connectedTransport": "Connected %@ · %@",
 
             "menu.connectDevice": "Connect Device",
             "menu.disconnect": "Disconnect",
@@ -120,6 +130,7 @@ enum L10n {
             "menu.sendFile": "Send File…",
             "menu.sendFinderSelection": "Send Finder Selection (Ctrl+Opt+F)",
             "menu.quit": "Quit",
+            "common.cancel": "Cancel",
 
             "connect.noDevices": "No paired devices (pair in System Settings > Bluetooth first)",
             "connect.preferred": "★ %@ (preferred)",
@@ -142,6 +153,9 @@ enum L10n {
             "error.saveFailed": "Failed to save file: %@",
             "error.noRelayService": "\"%@\" does not provide the relay service. Open BlueDesk on your phone, go to Relay and turn on the service.",
             "error.connectFailed": "Failed to connect to \"%@\": the classic Bluetooth link did not come up. Check that Bluetooth is on and Relay is enabled on your phone.",
+            "error.sendInterrupted": "Transfer interrupted: the phone connection dropped. Reconnect and send again.",
+            "error.exceedsPhoneLimit": "Exceeds the phone's transfer limit of %@, not sent",
+            "error.phoneRejected": "The phone returned an error: %@",
 
             "clipboard.empty": "Clipboard is empty",
             "clipboard.emptyHint": "Copy some text first before sending",
@@ -150,6 +164,8 @@ enum L10n {
             "send.sentBody": "%ld characters sent to phone",
             "send.sending": "Sending",
             "send.sendingBody": "%@ transferring…",
+            "file.sent": "File sent",
+            "file.sentBody": "%@ (%@) handed to the phone",
 
             "file.tooLarge": "File too large",
             "file.tooLargeLimit": "Single file limit is 64 MB",
@@ -164,6 +180,8 @@ enum L10n {
 
             "file.received": "File received",
             "file.receivedBody": "%@ (%@) saved to Downloads/BlueDesk",
+            "folder.received": "Folder received",
+            "folder.receivedBody": "%@ (%ld files) saved to Downloads/BlueDesk",
             "text.received": "Text received",
             "text.receivedBody": "Copied to clipboard (%ld chars), Cmd+V to paste",
 
@@ -177,6 +195,7 @@ enum L10n {
             "status.connected": "%@ に接続済み",
             "status.notConnected": "未接続（自動再接続中）",
             "status.phoneDisconnected": "スマホとの接続が切断されました",
+            "status.connectedTransport": "接続済み %@ · %@",
 
             "menu.connectDevice": "デバイス接続",
             "menu.disconnect": "接続を切断",
@@ -184,6 +203,7 @@ enum L10n {
             "menu.sendFile": "ファイルを送信…",
             "menu.sendFinderSelection": "Finder の選択項目を送信 (Ctrl+Opt+F)",
             "menu.quit": "終了",
+            "common.cancel": "キャンセル",
 
             "connect.noDevices": "ペアリング済みデバイスがありません（システム設定→Bluetooth でペアリング）",
             "connect.preferred": "★ %@（記憶）",
@@ -206,6 +226,9 @@ enum L10n {
             "error.saveFailed": "ファイルの保存に失敗しました：%@",
             "error.noRelayService": "「%@」はリレーサービスを提供していません。スマホで BlueDesk を開き、「リレー」でサービスを有効にしてください",
             "error.connectFailed": "「%@」への接続に失敗しました：クラシックBluetoothリンクが確立できません。スマホのBluetoothとリレーが有効か確認してください",
+            "error.sendInterrupted": "転送が中断されました：スマホとの接続が切れました。再接続して再送信してください",
+            "error.exceedsPhoneLimit": "スマホ側の転送上限 %@ を超えているため送信しませんでした",
+            "error.phoneRejected": "スマホ側からエラーが返されました：%@",
 
             "clipboard.empty": "クリップボードが空です",
             "clipboard.emptyHint": "テキストをコピーしてから送信してください",
@@ -214,6 +237,8 @@ enum L10n {
             "send.sentBody": "%ld 文字をスマホに送信しました",
             "send.sending": "送信中",
             "send.sendingBody": "%@ 転送中…",
+            "file.sent": "ファイルを送信しました",
+            "file.sentBody": "%@（%@）をスマホに渡しました",
 
             "file.tooLarge": "ファイルが大きすぎます",
             "file.tooLargeLimit": "1ファイルの上限は 64 MB です",
@@ -228,6 +253,8 @@ enum L10n {
 
             "file.received": "ファイルを受信しました",
             "file.receivedBody": "%@（%@）を Downloads/BlueDesk に保存しました",
+            "folder.received": "フォルダーを受信しました",
+            "folder.receivedBody": "%@（%ld ファイル）を Downloads/BlueDesk に保存しました",
             "text.received": "テキストを受信しました",
             "text.receivedBody": "クリップボードに書き込みました（%ld 文字）。Cmd+V で貼り付けできます",
 
@@ -241,6 +268,7 @@ enum L10n {
             "status.connected": "%@에 연결됨",
             "status.notConnected": "연결되지 않음 (재연결 중)",
             "status.phoneDisconnected": "폰 연결이 끊어졌습니다",
+            "status.connectedTransport": "연결됨 %@ · %@",
 
             "menu.connectDevice": "기기 연결",
             "menu.disconnect": "연결 해제",
@@ -248,6 +276,7 @@ enum L10n {
             "menu.sendFile": "파일 전송…",
             "menu.sendFinderSelection": "Finder 선택 항목 전송 (Ctrl+Opt+F)",
             "menu.quit": "종료",
+            "common.cancel": "취소",
 
             "connect.noDevices": "페어링된 기기 없음 (시스템 설정 → 블루투스에서 먼저 페어링)",
             "connect.preferred": "★ %@ (선호)",
@@ -270,6 +299,9 @@ enum L10n {
             "error.saveFailed": "파일 저장 실패: %@",
             "error.noRelayService": "\"%@\"이(가) 릴레이 서비스를 제공하지 않습니다. 폰에서 BlueDesk를 열고 '릴레이'에서 서비스를 켜세요",
             "error.connectFailed": "\"%@\" 연결 실패: 클래식 Bluetooth 링크가 연결되지 않았습니다. 폰의 Bluetooth와 릴레이가 켜져 있는지 확인하세요",
+            "error.sendInterrupted": "전송이 중단되었습니다: 폰 연결이 끊어졌습니다. 다시 연결한 후 재전송하세요",
+            "error.exceedsPhoneLimit": "폰 전송 한도 %@을(를) 초과하여 전송하지 않았습니다",
+            "error.phoneRejected": "폰에서 오류를 반환했습니다: %@",
 
             "clipboard.empty": "클립보드가 비어 있습니다",
             "clipboard.emptyHint": "텍스트를 먼저 복사한 후 전송하세요",
@@ -278,6 +310,8 @@ enum L10n {
             "send.sentBody": "%ld자를 폰으로 전송했습니다",
             "send.sending": "전송 중",
             "send.sendingBody": "%@ 전송 중…",
+            "file.sent": "파일 전송 완료",
+            "file.sentBody": "%@ (%@)을(를) 폰에 전달했습니다",
 
             "file.tooLarge": "파일이 너무 큽니다",
             "file.tooLargeLimit": "단일 파일 한도는 64 MB입니다",
@@ -292,10 +326,25 @@ enum L10n {
 
             "file.received": "파일 수신",
             "file.receivedBody": "%@ (%@)이(가) Downloads/BlueDesk에 저장되었습니다",
+            "folder.received": "폴더 수신",
+            "folder.receivedBody": "%@ (%ld개 파일)이(가) Downloads/BlueDesk에 저장되었습니다",
             "text.received": "텍스트 수신",
             "text.receivedBody": "클립보드에 복사됨 (%ld자), Cmd+V로 붙여넣기",
 
             "service.noFiles": "전송할 파일이 없습니다",
         ],
     ]
+}
+
+/// 字节数的人类可读形式（通知气泡共用）
+enum ByteSize {
+    static func human(_ bytes: Int) -> String {
+        if bytes >= 1024 * 1024 {
+            return String(format: "%.1f MB", Double(bytes) / 1024 / 1024)
+        }
+        if bytes >= 1024 {
+            return String(format: "%.1f KB", Double(bytes) / 1024)
+        }
+        return "\(bytes) B"
+    }
 }

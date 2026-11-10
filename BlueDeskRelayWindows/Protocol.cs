@@ -37,6 +37,16 @@ public static class Protocol
         public const byte Config = 0x0A;
         public const byte BatchMeta = 0x0B;
         public const byte BatchEnd = 0x0C;
+
+        /// <summary>网络端点（手机 → PC）：{"port":47654,"ips":["192.168.1.23"],"name":"BlueDesk-A1B2C3"}</summary>
+        public const byte NetInfo = 0x0D;
+
+        /// <summary>
+        /// 身份补充（PC → 手机）：{"id":"uuid","bt":"AA:BB:..","platform":"win","transport":"tcp"}。
+        /// 独立 TCP 数据链路额外带 "role":"data"，手机据此挂到蓝牙控制会话上而不断开蓝牙；
+        /// 不带 role 表示旧版「整条会话切 TCP」。
+        /// </summary>
+        public const byte Ident = 0x0E;
     }
 
     public const byte FlagNeedAck = 0x01;
@@ -178,4 +188,12 @@ public static class Protocol
         new(FrameType.Ack, new[] { ofType }, false);
 
     public static Frame Pong() => new(FrameType.Pong, Array.Empty<byte>(), false);
+
+    /// <summary>NET_INFO：手机下发的 TCP 数据通道端点</summary>
+    public static Frame NetInfo(string json) =>
+        new(FrameType.NetInfo, Encoding.UTF8.GetBytes(json), false);
+
+    /// <summary>IDENT：PC 补报稳定标识（走 TCP 时用于把会话还原成同一台 PC）</summary>
+    public static Frame Ident(string json) =>
+        new(FrameType.Ident, Encoding.UTF8.GetBytes(json), false);
 }

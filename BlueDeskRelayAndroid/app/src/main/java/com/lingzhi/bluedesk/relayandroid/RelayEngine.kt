@@ -17,6 +17,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.util.Log
 import android.webkit.MimeTypeMap
 import androidx.core.content.ContextCompat
@@ -44,12 +45,14 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.Closeable
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
 import java.io.IOException
 import java.util.Locale
 import java.util.UUID
+import kotlin.random.Random
 
 /** 连接状态（UI、通知、引擎共用） */
 sealed interface ConnState {
@@ -92,6 +95,8 @@ data class PairedDevice(val name: String, val address: String)
  *
  * 行为对齐 Windows / macOS 辅助程序：
  *  - 连接后先发 HELLO（本机名），手机端据此显示设备名；
+ *  - 蓝牙控制链路常驻；手机下发 NET_INFO 后再开一条独立 TCP 数据链路（role=data），
+ *    文件/文件夹走数据链路，文本与控制帧仍走蓝牙；
  *  - 收 TEXT → 写剪贴板并通知；收 FILE_META/CHUNK/END → 存 Download/BlueDesk；
  *  - 收到的 needAck 帧回 ACK，PING 回 PONG；
  *  - 断线每 5 秒自动重连；发送内容在未连接时排队。
@@ -102,14 +107,28 @@ object RelayEngine {
     private const val PREFS = "relay_prefs"
     private const val KEY_MAC = "peer_mac"
     private const val KEY_NAME = "peer_name"
+    /** 手机 Wi-Fi 数据通道端点（来自 NET_INFO） */
+    private const val KEY_WIFI_HOST = "wifi_host"
+    private const val KEY_WIFI_PORT = "wifi_port"
+    /** 本机稳定标识：走 TCP 时手机拿不到 MAC，靠它把会话认回同一台设备 */
+    private const val KEY_PEER_ID = "peer_id"
     private const val RETRY_MS = 5_000L
     private const val CONNECT_TIMEOUT_MS = 15_000L
+    /** 独立 TCP 数据链路：探测 4 秒，失败后 5~10 秒重试 */
+    private const val DATA_CONNECT_TIMEOUT_MS = 4_000
+    private const val DATA_RETRY_MIN_MS = 5_000L
+    private const val DATA_RETRY_JITTER_MS = 5_000L
+    /** 没有蓝牙可用时，用记住的端点把整条会话跑在 TCP 上（老兜底模式） */
+    private const val WIFI_CONNECT_TIMEOUT_MS = 4_000
+    private const val WIFI_FAILURE_LIMIT = 3
+    private const val WIFI_COOLDOWN_MS = 60_000L
+    private const val DEFAULT_WIFI_PORT = 47654
+    private const val WIFI_CHUNK = 64 * 1024
 
     private lateinit var app: Context
     private lateinit var prefs: SharedPreferences
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val writeMutex = Mutex()
     private val fileMutex = Mutex()
 
     private val _state = MutableStateFlow<ConnState>(ConnState.Idle)
@@ -127,18 +146,33 @@ object RelayEngine {
 
     private val outgoing = Channel<Outgoing>(Channel.UNLIMITED)
     private val wake = Channel<Unit>(Channel.CONFLATED)
+    private val dataWake = Channel<Unit>(Channel.CONFLATED)
 
+    /** 蓝牙控制链路（没有蓝牙可用时，也可能是整条走 TCP 的兜底链路） */
     @Volatile
-    private var socket: BluetoothSocket? = null
+    private var controlLink: Link? = null
+
+    /** 独立的 TCP 数据链路：只跑批量文件帧，与蓝牙控制链路并存 */
+    @Volatile
+    private var dataLink: Link? = null
+
+    /** 等待数据链路超时后的冷却截止时间，避免每个文件都白等 */
+    @Volatile
+    private var dataLinkWaitSkippedUntil = 0L
 
     @Volatile
     private var pendingSocket: BluetoothSocket? = null
 
+    /** 数据链路分块大小：手机通过 NET_INFO 的 chunk 下发，默认 64 KB */
     @Volatile
-    private var output: DataOutputStream? = null
+    private var dataChunk = WIFI_CHUNK
+
+    private var wifiFailures = 0
+    private var wifiCooldownUntil = 0L
 
     private var supervisorJob: Job? = null
     private var workerJob: Job? = null
+    private var dataJob: Job? = null
 
     @Volatile
     private var running = false
@@ -213,12 +247,39 @@ object RelayEngine {
         val discarding: Boolean get() = rejected || strayFile
     }
 
+    /**
+     * 一条已建立的通道。
+     *
+     * 蓝牙控制链路常驻；数据链路是手机同意的额外 TCP，只跑批量文件帧。
+     * 每条通道各自持有分块大小与写锁，两条链路上的帧不会互相交错。
+     */
+    private class Link(
+        val label: String,
+        val socket: Closeable,
+        val input: DataInputStream,
+        val output: DataOutputStream,
+        /** 蓝牙链路受 MTU 限制，只有它可以承载控制帧 */
+        val isBluetooth: Boolean,
+        @Volatile var chunk: Int,
+    ) {
+        private val writeMutex = Mutex()
+
+        suspend fun send(frame: RelayProtocol.Frame) = writeMutex.withLock {
+            RelayProtocol.write(output, frame)
+        }
+
+        fun close() {
+            runCatching { socket.close() }
+        }
+    }
+
     fun init(context: Context) {
         if (::app.isInitialized) return
         app = context.applicationContext
         prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         Notifier.init(app)
         ensureWorker()
+        ensureDataWorker()
     }
 
     // ------------------------------------------------------------
@@ -234,25 +295,29 @@ object RelayEngine {
         running = true
         paused = false
         ensureSupervisor()
+        ensureDataWorker()
     }
 
     fun stop() {
         running = false
         supervisorJob?.cancel()
         supervisorJob = null
-        closeSocket()
+        dataJob?.cancel()
+        dataJob = null
+        closeLinks()
         _state.value = ConnState.Idle
     }
 
     fun disconnect() {
         paused = true
-        closeSocket()
+        closeLinks()
         _state.value = ConnState.Idle
     }
 
     fun reconnect() {
         paused = false
         wake.trySend(Unit)
+        dataWake.trySend(Unit)
         if (!running) start()
     }
 
@@ -402,7 +467,7 @@ object RelayEngine {
                     withTimeoutOrNull(1000L) { wake.receive() }
                     continue
                 }
-                if (socket != null) {
+                if (controlLink != null) {
                     withTimeoutOrNull(1000L) { wake.receive() }
                     continue
                 }
@@ -413,7 +478,7 @@ object RelayEngine {
                 } catch (e: Exception) {
                     Log.w(TAG, "连接循环异常：${e.message}")
                 }
-                if (running && socket == null) {
+                if (running && controlLink == null) {
                     withTimeoutOrNull(RETRY_MS) { wake.receive() }
                 }
             }
@@ -423,14 +488,17 @@ object RelayEngine {
     private suspend fun connectOnce() = withContext(Dispatchers.IO) {
         val adapter = bluetoothAdapter()
         if (adapter == null) {
+            if (tryConnectWifiOnly()) return@withContext
             _state.value = ConnState.Error(app.getString(R.string.state_error_bluetooth_unsupported))
             return@withContext
         }
         if (!hasConnectPermission()) {
+            if (tryConnectWifiOnly()) return@withContext
             _state.value = ConnState.Error(app.getString(R.string.state_error_no_permission))
             return@withContext
         }
         if (!runCatching { adapter.isEnabled }.getOrDefault(false)) {
+            if (tryConnectWifiOnly()) return@withContext
             _state.value = ConnState.BluetoothOff
             return@withContext
         }
@@ -439,6 +507,7 @@ object RelayEngine {
         val device = savedMac?.let { mac -> runCatching { adapter.getRemoteDevice(mac) }.getOrNull() }
             ?: findBlueDeskDevice(adapter)
         if (device == null) {
+            if (tryConnectWifiOnly()) return@withContext
             _state.value = ConnState.NoDevice
             return@withContext
         }
@@ -464,46 +533,320 @@ object RelayEngine {
             }
 
             pendingSocket = null
-            val input = DataInputStream(s.inputStream)
-            val out = DataOutputStream(s.outputStream)
-            socket = s
-            output = out
-            sendFrame(RelayProtocol.hello(localDeviceName()))
+            val link = Link(
+                label = "bt:${device.address}",
+                socket = s,
+                input = DataInputStream(s.inputStream),
+                output = DataOutputStream(s.outputStream),
+                isBluetooth = true,
+                chunk = RelayProtocol.MAX_CHUNK,     // 蓝牙受 MTU 限制，回到 4 KB
+            )
+            controlLink = link
+            link.send(RelayProtocol.hello(localDeviceName()))
+            link.send(RelayProtocol.ident(identJson("bt")))
 
             prefs.edit().putString(KEY_MAC, device.address).putString(KEY_NAME, name).apply()
             _state.value = ConnState.Connected(name, device.address)
-            Log.i(TAG, "已连接 $name (${device.address})")
-            readLoop(input)
+            Log.i(TAG, "已连接 $name (${device.address})，控制链路走蓝牙")
+            dataWake.trySend(Unit)      // 蓝牙控制链路就绪后才去开数据链路
+
+            readLoop(link)
+
+            closeLinks()
+            if (running) _state.value = ConnState.Idle
         } catch (e: CancellationException) {
             runCatching { connecting?.close() }
             throw e
         } catch (e: Exception) {
             runCatching { connecting?.close() }
-            if (socket == null) {
-                _state.value = ConnState.Error(friendlyError(e))
-                Log.w(TAG, "连接失败：${e.message}")
-            }
+            closeLinks()
+            _state.value = ConnState.Error(friendlyError(e))
+            Log.w(TAG, "连接失败：${e.message}")
         } finally {
             pendingSocket = null
         }
     }
 
-    private suspend fun readLoop(input: DataInputStream) {
+    /**
+     * 没有蓝牙可用时的兜底：直接用记住的 Wi-Fi 端点把整条会话跑在 TCP 上。
+     *
+     * 这种模式没有蓝牙控制会话可挂，IDENT 不带 role，手机按「整条会话切 TCP」处理。
+     */
+    private suspend fun tryConnectWifiOnly(): Boolean {
+        if (System.currentTimeMillis() < wifiCooldownUntil) return false
+        val endpoint = savedEndpoint() ?: return false
+        val (host, port) = endpoint
+
+        val name = prefs.getString(KEY_NAME, null) ?: "BlueDesk"
+        _state.value = ConnState.Connecting(name)
+
+        val s = java.net.Socket()
+        try {
+            val attempt = scope.async(Dispatchers.IO) {
+                runCatching {
+                    s.connect(java.net.InetSocketAddress(host, port), WIFI_CONNECT_TIMEOUT_MS)
+                }.isSuccess
+            }
+            val ok = withTimeoutOrNull(WIFI_CONNECT_TIMEOUT_MS + 1_000L) { attempt.await() } ?: false
+            if (!ok) {
+                attempt.cancel()
+                runCatching { s.close() }
+                onWifiFailed(host, port)
+                return false
+            }
+
+            configureTcp(s)
+            val link = Link(
+                label = "tcp:$host:$port",
+                socket = s,
+                input = DataInputStream(s.getInputStream()),
+                output = DataOutputStream(s.getOutputStream()),
+                isBluetooth = false,
+                chunk = dataChunk,
+            )
+            controlLink = link
+            link.send(RelayProtocol.hello(localDeviceName()))
+            link.send(RelayProtocol.ident(identJson("tcp")))
+
+            wifiFailures = 0
+            wifiCooldownUntil = 0L
+            _state.value = ConnState.Connected(name, "$host:$port")
+            Log.i(TAG, "已连接 $name（整条会话走 Wi-Fi $host:$port）")
+
+            readLoop(link)
+            closeLinks()
+            if (running) _state.value = ConnState.Idle
+            return true
+        } catch (e: CancellationException) {
+            runCatching { s.close() }
+            throw e
+        } catch (e: Exception) {
+            runCatching { s.close() }
+            closeLinks()
+            _state.value = ConnState.Error(friendlyError(e))
+            Log.w(TAG, "Wi-Fi 连接失败：${e.message}")
+            return false
+        }
+    }
+
+    // ------------------------------------------------------------
+    // 独立数据链路（蓝牙控制链路常驻，文件帧走这条 TCP）
+    // ------------------------------------------------------------
+
+    private fun ensureDataWorker() {
+        if (dataJob?.isActive == true) return
+        dataJob = scope.launch {
+            while (running) {
+                val control = controlLink
+                if (paused || control == null || !control.isBluetooth || dataLink != null) {
+                    withTimeoutOrNull(1000L) { dataWake.receive() }
+                    continue
+                }
+                val endpoint = savedEndpoint()
+                if (endpoint == null) {
+                    withTimeoutOrNull(1000L) { dataWake.receive() }
+                    continue
+                }
+                try {
+                    connectDataLink(control, endpoint.first, endpoint.second)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "数据链路异常：${e.message}")
+                }
+                // 只在蓝牙控制链路在线时重试，间隔 5~10 秒
+                if (running && controlLink != null && dataLink == null) {
+                    val retry = DATA_RETRY_MIN_MS + Random.nextLong(DATA_RETRY_JITTER_MS + 1)
+                    Log.i(TAG, "数据链路未就绪，${retry / 1000} 秒后重试")
+                    withTimeoutOrNull(retry) { dataWake.receive() }
+                }
+            }
+        }
+    }
+
+    /** 连上数据链路并跑接收循环；只有蓝牙控制链路在线时才调用 */
+    private suspend fun connectDataLink(control: Link, host: String, port: Int) {
+        val s = java.net.Socket()
+        try {
+            val attempt = scope.async(Dispatchers.IO) {
+                runCatching {
+                    s.connect(java.net.InetSocketAddress(host, port), DATA_CONNECT_TIMEOUT_MS)
+                }.isSuccess
+            }
+            val ok = withTimeoutOrNull(DATA_CONNECT_TIMEOUT_MS + 1_000L) { attempt.await() } ?: false
+            if (!ok) {
+                attempt.cancel()
+                runCatching { s.close() }
+                Log.w(TAG, "数据链路 $host:$port 连不上")
+                return
+            }
+
+            configureTcp(s)
+            val link = Link(
+                label = "data:$host:$port",
+                socket = s,
+                input = DataInputStream(s.getInputStream()),
+                output = DataOutputStream(s.getOutputStream()),
+                isBluetooth = false,
+                chunk = dataChunk,
+            )
+            // 先 HELLO 再 IDENT：手机看到 role=data 才把这条 TCP 挂到蓝牙会话上，不会断蓝牙
+            link.send(RelayProtocol.hello(localDeviceName()))
+            link.send(RelayProtocol.ident(identJson("tcp", "data")))
+            if (controlLink !== control) {      // 蓝牙已断，别把孤儿链路留下
+                link.close()
+                return
+            }
+
+            dataLink = link
+            Log.i(TAG, "数据链路已建立 $host:$port")
+
+            readLoop(link)
+
+            if (dataLink === link) dataLink = null
+            link.close()
+            Log.i(TAG, "数据链路断开 $host:$port")
+        } catch (e: CancellationException) {
+            runCatching { s.close() }
+            throw e
+        } catch (e: Exception) {
+            runCatching { s.close() }
+            Log.w(TAG, "数据链路失败：${e.message}")
+        } finally {
+            if (dataLink?.socket === s) dataLink = null
+        }
+    }
+
+    private fun configureTcp(s: java.net.Socket) {
+        runCatching {
+            s.tcpNoDelay = true
+            s.sendBufferSize = 256 * 1024
+            s.receiveBufferSize = 256 * 1024
+        }
+    }
+
+    /** 记住的端点：手机 NET_INFO 下发过，或用户手工填过 */
+    private fun savedEndpoint(): Pair<String, Int>? {
+        val host = prefs.getString(KEY_WIFI_HOST, null)?.takeIf { it.isNotBlank() } ?: return null
+        val port = prefs.getInt(KEY_WIFI_PORT, 0)
+        return if (port > 0) host to port else null
+    }
+
+    private fun onWifiFailed(host: String, port: Int) {
+        wifiFailures += 1
+        wifiCooldownUntil = System.currentTimeMillis() + WIFI_COOLDOWN_MS
+        Log.w(TAG, "Wi-Fi $host:$port 连不上（第 $wifiFailures 次），回落蓝牙")
+        if (wifiFailures >= WIFI_FAILURE_LIMIT) {
+            wifiFailures = 0
+            prefs.edit().remove(KEY_WIFI_HOST).remove(KEY_WIFI_PORT).apply()
+            Log.w(TAG, "Wi-Fi 连续失败，已清除端点记忆")
+        }
+    }
+
+    /**
+     * 手机下发的网络端点：只记下来并唤醒数据链路，绝不断开蓝牙。
+     *
+     * 新版手机把 role=data 的 TCP 挂到蓝牙会话上，控制仍走蓝牙；
+     * 没有可用地址时收掉数据链路，继续走蓝牙。
+     */
+    private fun onNetInfo(frame: RelayProtocol.Frame, link: Link) {
+        val obj = runCatching { JSONObject(String(frame.payload, Charsets.UTF_8)) }.getOrNull() ?: return
+        val port = obj.optInt("port", 0)
+        val ips = obj.optJSONArray("ips")?.let { arr ->
+            (0 until arr.length()).mapNotNull { i ->
+                arr.optString(i).takeIf { it.isNotBlank() }
+            }
+        } ?: emptyList()
+        val chunk = obj.optInt("chunk", WIFI_CHUNK)
+
+        if (port <= 0 || ips.isEmpty()) {
+            prefs.edit().remove(KEY_WIFI_HOST).remove(KEY_WIFI_PORT).apply()
+            if (link.isBluetooth) closeDataLink()
+            Log.i(TAG, "手机未提供 Wi-Fi 端点（可能没连 Wi-Fi），继续走蓝牙")
+            return
+        }
+        if (chunk > 0) {
+            val size = chunk.coerceIn(RelayProtocol.MAX_CHUNK, 256 * 1024)
+            dataChunk = size
+            if (!link.isBluetooth) link.chunk = size
+        }
+
+        val host = preferLan(ips)
+        val saved = savedEndpoint()
+        if (saved != null && saved.first == host && saved.second == port) {
+            dataWake.trySend(Unit)
+            return
+        }
+        prefs.edit().putString(KEY_WIFI_HOST, host).putInt(KEY_WIFI_PORT, port).apply()
+        Log.i(TAG, "手机提供 Wi-Fi 端点 $host:$port，准备建立数据链路")
+        if (link.isBluetooth) {
+            closeDataLink()     // 端点变了，旧链路作废
+            dataWake.trySend(Unit)
+        }
+    }
+
+    /** 多网卡时优先内网地址 */
+    private fun preferLan(ips: List<String>): String {
+        ips.firstOrNull { it.startsWith("192.168.") || it.startsWith("10.") }?.let { return it }
+        ips.firstOrNull { ip ->
+            if (!ip.startsWith("172.")) return@firstOrNull false
+            val second = ip.split(".").getOrNull(1)?.toIntOrNull()
+            second != null && second in 16..31
+        }?.let { return it }
+        return ips.first()
+    }
+
+    /** IDENT 载荷：Android 拿不到本机蓝牙 MAC，用持久化的 UUID 当稳定标识 */
+    private fun identJson(transport: String, role: String? = null): String {
+        val json = JSONObject()
+            .put("id", localPeerId())
+            .put("platform", "android")
+            .put("transport", transport)
+        localBluetoothMac()?.let { json.put("bt", it) }
+        if (role != null) json.put("role", role)
+        return json.toString()
+    }
+
+    private fun localPeerId(): String {
+        prefs.getString(KEY_PEER_ID, null)?.let { return it }
+        val id = UUID.randomUUID().toString().replace("-", "")
+        prefs.edit().putString(KEY_PEER_ID, id).apply()
+        return id
+    }
+
+    /**
+     * 本机蓝牙 MAC。Android 6 起系统不再对应用公开，能拿到就带上，
+     * 手机据此把数据链路挂回对应的蓝牙会话；拿不到只带 id。
+     */
+    private fun localBluetoothMac(): String? {
+        val adapter = bluetoothAdapter()
+        runCatching { adapter?.address }.getOrNull()?.let { if (isMac(it)) return it }
+        runCatching {
+            Settings.Secure.getString(app.contentResolver, "bluetooth_address")
+        }.getOrNull()?.let { if (isMac(it)) return it }
+        return null
+    }
+
+    private fun isMac(value: String?): Boolean =
+        value != null && value != "02:00:00:00:00:00" &&
+            Regex("^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$").matches(value)
+
+    private suspend fun readLoop(link: Link) {
         val assembler = RelayProtocol.FileAssembler()
         val batch = BatchReceiver()
         try {
             while (true) {
-                val frame = RelayProtocol.read(input) ?: break
-                handleFrame(frame, assembler, batch)
+                val frame = RelayProtocol.read(link.input) ?: break
+                handleFrame(frame, assembler, batch, link)
             }
         } catch (e: IOException) {
-            if (running) Log.i(TAG, "连接断开：${e.message}")
+            if (running) Log.i(TAG, "连接断开（${link.label}）：${e.message}")
         } catch (e: SecurityException) {
             Log.w(TAG, "蓝牙权限异常：${e.message}")
         } finally {
+            // 半截文件/批次不能留到重连之后
             batch.reset()
-            closeSocket()
-            if (running) _state.value = ConnState.Idle
+            assembler.clear()
         }
     }
 
@@ -511,6 +854,7 @@ object RelayEngine {
         frame: RelayProtocol.Frame,
         assembler: RelayProtocol.FileAssembler,
         batch: BatchReceiver,
+        link: Link,
     ) {
         when (frame.type) {
             RelayProtocol.FrameType.TEXT -> {
@@ -524,7 +868,7 @@ object RelayEngine {
                 )
                 copyText(text)
                 Notifier.receivedText(app, text)
-                if (frame.needAck) sendFrame(RelayProtocol.ack(frame.type))
+                if (frame.needAck) sendFrame(RelayProtocol.ack(frame.type), link)
             }
 
             RelayProtocol.FrameType.CONFIG -> {
@@ -536,13 +880,13 @@ object RelayEngine {
             }
 
             RelayProtocol.FrameType.BATCH_META -> {
-                handleBatchMeta(frame, assembler, batch)
-                if (frame.needAck) sendFrame(RelayProtocol.ack(frame.type))
+                handleBatchMeta(frame, assembler, batch, link)
+                if (frame.needAck) sendFrame(RelayProtocol.ack(frame.type), link)
             }
 
             RelayProtocol.FrameType.FILE_META -> {
                 if (batch.active) {
-                    handleBatchFileMeta(frame, assembler, batch)
+                    handleBatchFileMeta(frame, assembler, batch, link)
                 } else {
                     val json = runCatching { JSONObject(String(frame.payload, Charsets.UTF_8)) }.getOrNull()
                     val name = json?.optString("name", "file") ?: "file"
@@ -555,7 +899,7 @@ object RelayEngine {
 
             RelayProtocol.FrameType.FILE_END -> {
                 if (batch.active) {
-                    handleBatchFileEnd(assembler, batch)
+                    handleBatchFileEnd(assembler, batch, link)
                 } else {
                     val name = assembler.name
                     if (assembler.overflow) {
@@ -578,15 +922,18 @@ object RelayEngine {
                     }
                     assembler.clear()
                 }
-                if (frame.needAck) sendFrame(RelayProtocol.ack(frame.type))
+                if (frame.needAck) sendFrame(RelayProtocol.ack(frame.type), link)
             }
 
             RelayProtocol.FrameType.BATCH_END -> {
                 handleBatchEnd(batch)
-                if (frame.needAck) sendFrame(RelayProtocol.ack(frame.type))
+                if (frame.needAck) sendFrame(RelayProtocol.ack(frame.type), link)
             }
 
-            RelayProtocol.FrameType.PING -> sendFrame(RelayProtocol.pong())
+            RelayProtocol.FrameType.PING -> sendFrame(RelayProtocol.pong(), link)
+
+            // 手机下发的网络端点：只记下来并唤醒数据链路，绝不断开蓝牙
+            RelayProtocol.FrameType.NET_INFO -> onNetInfo(frame, link)
 
             RelayProtocol.FrameType.ERROR -> {
                 emitMessage(app.getString(R.string.msg_phone_error, String(frame.payload, Charsets.UTF_8)))
@@ -598,6 +945,7 @@ object RelayEngine {
         frame: RelayProtocol.Frame,
         assembler: RelayProtocol.FileAssembler,
         batch: BatchReceiver,
+        link: Link,
     ) {
         val json = runCatching { JSONObject(String(frame.payload, Charsets.UTF_8)) }.getOrNull()
         if (json == null) {
@@ -623,7 +971,7 @@ object RelayEngine {
         if (limit > 0L && batch.declaredBytes > limit) {
             batch.rejected = true
             emitMessage(app.getString(R.string.msg_folder_exceeds_limit, rawName))
-            sendFrame(RelayProtocol.error(app.getString(R.string.msg_folder_exceeds_limit, limitLabel())))
+            sendFrame(RelayProtocol.error(app.getString(R.string.msg_folder_exceeds_limit, limitLabel())), link)
         }
     }
 
@@ -631,6 +979,7 @@ object RelayEngine {
         frame: RelayProtocol.Frame,
         assembler: RelayProtocol.FileAssembler,
         batch: BatchReceiver,
+        link: Link,
     ) {
         val json = runCatching { JSONObject(String(frame.payload, Charsets.UTF_8)) }.getOrNull()
         if (json == null) {
@@ -656,13 +1005,13 @@ object RelayEngine {
         if (size > 0L && !withinLimit(size)) {
             batch.rejected = true
             emitMessage(app.getString(R.string.msg_file_exceeds_limit_batch, limitLabel()))
-            sendFrame(RelayProtocol.error(app.getString(R.string.msg_file_exceeds_limit_batch, limitLabel())))
+            sendFrame(RelayProtocol.error(app.getString(R.string.msg_file_exceeds_limit_batch, limitLabel())), link)
             return
         }
         if (limit > 0L && size > 0L && batch.receivedBytes + size > limit) {
             batch.rejected = true
             emitMessage(app.getString(R.string.msg_folder_exceeds_limit_batch, limitLabel()))
-            sendFrame(RelayProtocol.error(app.getString(R.string.msg_folder_exceeds_limit_batch, limitLabel())))
+            sendFrame(RelayProtocol.error(app.getString(R.string.msg_folder_exceeds_limit_batch, limitLabel())), link)
             return
         }
 
@@ -673,6 +1022,7 @@ object RelayEngine {
     private suspend fun handleBatchFileEnd(
         assembler: RelayProtocol.FileAssembler,
         batch: BatchReceiver,
+        link: Link,
     ) {
         if (batch.discarding) {
             assembler.clear()
@@ -682,7 +1032,7 @@ object RelayEngine {
         if (assembler.overflow) {
             batch.rejected = true
             emitMessage(app.getString(R.string.msg_file_exceeds_limit_batch, limitLabel()))
-            sendFrame(RelayProtocol.error(app.getString(R.string.msg_file_exceeds_limit_batch, limitLabel())))
+            sendFrame(RelayProtocol.error(app.getString(R.string.msg_file_exceeds_limit_batch, limitLabel())), link)
             assembler.clear()
             return
         }
@@ -690,7 +1040,7 @@ object RelayEngine {
         if (limit > 0L && batch.receivedBytes + assembler.received > limit) {
             batch.rejected = true
             emitMessage(app.getString(R.string.msg_folder_exceeds_limit_batch, limitLabel()))
-            sendFrame(RelayProtocol.error(app.getString(R.string.msg_folder_exceeds_limit_batch, limitLabel())))
+            sendFrame(RelayProtocol.error(app.getString(R.string.msg_folder_exceeds_limit_batch, limitLabel())), link)
             assembler.clear()
             return
         }
@@ -735,7 +1085,7 @@ object RelayEngine {
         workerJob = scope.launch {
             for (task in outgoing) {
                 // 未连接时原地等待，连上后再发，行为与 PC 端的待发队列一致
-                while (socket == null) delay(200)
+                while (controlLink == null && dataLink == null) delay(200)
                 when (task) {
                     is Outgoing.TextTask -> deliverText(task)
                     is Outgoing.FileTask -> deliverFile(task)
@@ -745,6 +1095,7 @@ object RelayEngine {
         }
     }
 
+    /** TEXT 始终走蓝牙控制链路 */
     private suspend fun deliverText(task: Outgoing.TextTask) {
         updateRecord(task.recordId) { it.copy(status = RecordStatus.SENDING) }
         try {
@@ -756,24 +1107,46 @@ object RelayEngine {
         }
     }
 
+    /**
+     * 发送前等数据链路就绪：手机刚下发 NET_INFO 时 TCP 还在建立，
+     * 直接发会落到蓝牙。给 TCP 3 秒优先窗口，等不到才兜底。
+     */
+    private suspend fun awaitDataLink(): Link? {
+        dataLink?.let { return it }
+        if (controlLink == null || savedEndpoint() == null) return null
+        if (System.currentTimeMillis() < dataLinkWaitSkippedUntil) return null
+        val deadline = System.currentTimeMillis() + 3_000
+        while (System.currentTimeMillis() < deadline) {
+            delay(100)
+            dataLink?.let { return it }
+        }
+        dataLinkWaitSkippedUntil = System.currentTimeMillis() + 30_000
+        Log.i(TAG, "数据链路未就绪，本次文件改走蓝牙")
+        return null
+    }
+
+    /** 文件数据链路在线就走数据链路，否则走蓝牙控制链路 */
     private suspend fun deliverFile(task: Outgoing.FileTask) {
         fileMutex.withLock {
             updateRecord(task.recordId) { it.copy(status = RecordStatus.SENDING) }
+            val link = awaitDataLink() ?: controlLink
             try {
+                if (link == null) throw IOException(app.getString(R.string.error_not_connected))
+                val chunk = link.chunk
                 val bytes = task.file.readBytes()
                 if (!withinLimit(bytes.size.toLong())) throw IOException("超过传输上限")
                 val meta = JSONObject()
                     .put("name", task.name)
                     .put("size", bytes.size)
                     .toString()
-                sendFrame(RelayProtocol.fileMeta(meta))
+                sendFrame(RelayProtocol.fileMeta(meta), link)
                 var off = 0
                 while (off < bytes.size) {
-                    val len = minOf(RelayProtocol.MAX_CHUNK, bytes.size - off)
-                    sendFrame(RelayProtocol.chunk(bytes, off, len))
+                    val len = minOf(chunk, bytes.size - off)
+                    sendFrame(RelayProtocol.chunk(bytes, off, len), link)
                     off += len
                 }
-                sendFrame(RelayProtocol.fileEnd())
+                sendFrame(RelayProtocol.fileEnd(), link)
                 updateRecord(task.recordId) { it.copy(status = RecordStatus.SENT) }
             } catch (e: Exception) {
                 updateRecord(task.recordId) { it.copy(status = RecordStatus.FAILED) }
@@ -789,8 +1162,11 @@ object RelayEngine {
     private suspend fun deliverTree(task: Outgoing.TreeTask) {
         fileMutex.withLock {
             updateRecord(task.recordId) { it.copy(status = RecordStatus.SENDING) }
+            val link = awaitDataLink() ?: controlLink
             var sentBytes = 0L
             try {
+                if (link == null) throw IOException(app.getString(R.string.error_not_connected))
+                val chunk = link.chunk
                 val limit = _transferLimit.value
                 val meta = JSONObject()
                     .put("id", task.recordId)
@@ -799,32 +1175,32 @@ object RelayEngine {
                     .put("bytes", task.totalBytes)
                     .put("dirs", JSONArray(task.dirs))
                     .toString()
-                sendFrame(RelayProtocol.batchMeta(meta))
+                sendFrame(RelayProtocol.batchMeta(meta), link)
 
                 for (entry in task.files) {
                     val fileName = entry.path.substringAfterLast('/')
-                    sendFrame(RelayProtocol.fileMeta(fileName, entry.size, entry.path, task.recordId))
+                    sendFrame(RelayProtocol.fileMeta(fileName, entry.size, entry.path, task.recordId), link)
                     val input = app.contentResolver.openInputStream(entry.uri)
                         ?: throw IOException("无法读取 ${entry.path}")
                     input.use { stream ->
-                        val buffer = ByteArray(RelayProtocol.MAX_CHUNK)
+                        val buffer = ByteArray(chunk)
                         while (true) {
                             val read = stream.read(buffer)
                             if (read < 0) break
                             if (read == 0) continue
                             if (limit > 0L && sentBytes + read > limit) throw IOException("超过传输上限")
-                            sendFrame(RelayProtocol.chunk(buffer, 0, read))
+                            sendFrame(RelayProtocol.chunk(buffer, 0, read), link)
                             sentBytes += read
                         }
                     }
-                    sendFrame(RelayProtocol.fileEnd())
+                    sendFrame(RelayProtocol.fileEnd(), link)
                 }
 
                 val end = JSONObject()
                     .put("id", task.recordId)
                     .put("files", task.files.size)
                     .toString()
-                sendFrame(RelayProtocol.batchEnd(end))
+                sendFrame(RelayProtocol.batchEnd(end), link)
                 updateRecord(task.recordId) { it.copy(status = RecordStatus.SENT) }
             } catch (e: Exception) {
                 updateRecord(task.recordId) { it.copy(status = RecordStatus.FAILED) }
@@ -834,10 +1210,11 @@ object RelayEngine {
         }
     }
 
-    private suspend fun sendFrame(frame: RelayProtocol.Frame) {
-        // 这条消息会被 deliverText 拼进 msg_send_failed 直接展示，必须本地化
-        val out = output ?: throw IOException(app.getString(R.string.error_not_connected))
-        writeMutex.withLock { RelayProtocol.write(out, frame) }
+    /** 没有指定通道时走蓝牙控制链路；这条消息会被 deliverText 拼进 msg_send_failed 直接展示，必须本地化 */
+    private suspend fun sendFrame(frame: RelayProtocol.Frame, link: Link? = null) {
+        val target = link ?: controlLink
+            ?: throw IOException(app.getString(R.string.error_not_connected))
+        target.send(frame)
     }
 
     // ------------------------------------------------------------
@@ -872,12 +1249,20 @@ object RelayEngine {
         else -> e.message ?: app.getString(R.string.error_connection_failed)
     }
 
-    private fun closeSocket() {
+    private fun closeDataLink() {
+        val link = dataLink
+        dataLink = null
+        link?.close()
+    }
+
+    /** 关掉控制链路与挂在它上面的数据链路；蓝牙控制断开时数据链路必须一起收掉 */
+    private fun closeLinks() {
+        closeDataLink()
         runCatching { pendingSocket?.close() }
         pendingSocket = null
-        runCatching { socket?.close() }
-        socket = null
-        output = null
+        val link = controlLink
+        controlLink = null
+        link?.close()
     }
 
     private fun addRecord(record: RelayRecord) {

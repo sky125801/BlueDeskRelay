@@ -1,10 +1,24 @@
 using System.Diagnostics;
+using System.Net.Sockets;
 using System.Text;
 using InTheHand.Net;
 using InTheHand.Net.Bluetooth;
 using InTheHand.Net.Sockets;
 
 namespace BlueDeskRelay;
+
+/// <summary>
+/// 链路角色。
+///
+/// Control = 蓝牙控制链路（HELLO/IDENT/CONFIG/NET_INFO/TEXT/PING 等控制与文本帧都走它）；
+/// Data = 手机监听端口上的独立 TCP 批量数据链路，只收文件/文件夹帧。
+/// 端点一律由手机通过 NET_INFO 自动下发，用户不需要（也不允许）手工配置。
+/// </summary>
+public enum PhoneLinkRole
+{
+    Control,
+    Data,
+}
 
 /// <summary>
 /// 与手机的蓝牙 SPP 数据通道。
@@ -17,7 +31,10 @@ namespace BlueDeskRelay;
 ///      收 TEXT → 写剪贴板；收 FILE_META/CHUNK/END → 存 Downloads\BlueDesk；
 ///      收到 needAck 的帧 → 回 ACK；收 PING → 回 PONG。
 ///
-/// 由 <see cref="SuperviseAsync"/> 常驻守护，断线后自动重连。
+/// 双通道模式下，蓝牙控制链路常驻；手机通过 NET_INFO 下发端点后，
+/// 另起一个 <see cref="PhoneLinkRole.Data"/> 实例走 TCP 传批量文件。
+///
+/// 由 <see cref="SuperviseAsync"/>（控制）与 <see cref="SuperviseDataAsync"/>（数据）常驻守护。
 /// </summary>
 public sealed class PhoneLink : IDisposable
 {
@@ -30,16 +47,32 @@ public sealed class PhoneLink : IDisposable
     /// <summary>重连间隔</summary>
     private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(5);
 
+    /// <summary>数据链路连接超时（秒）</summary>
+    private const int DataConnectTimeoutSeconds = 4;
+
+    /// <summary>数据链路重连间隔（5~10 秒）</summary>
+    private static readonly TimeSpan DataRetryDelay = TimeSpan.FromSeconds(7);
+
+    private readonly PhoneLinkRole _role;
     private readonly SemaphoreSlim _sendLock = new(1, 1);
     /// <summary>发送串行门：保证一个文件/一个文件夹批次的帧序列不与文本或其他文件交错</summary>
     private readonly SemaphoreSlim _sequenceLock = new(1, 1);
     private readonly SemaphoreSlim _wake = new(0, 1);
     private readonly object _gate = new();
 
-    private BluetoothClient? _client;
-    private Stream? _stream;
+    private IRelayTransport? _transport;
     private CancellationTokenSource? _readCts;
     private volatile bool _disposed;
+
+
+    /// <summary>当前分块大小：蓝牙 4 KB，Wi-Fi 默认 64 KB</summary>
+    private int _chunkSize = Protocol.MaxChunk;
+
+    /// <summary>手机是否下发过可用的 TCP 数据通道端点</summary>
+    private volatile bool _hasWifiEndpoint;
+
+    /// <summary>等待数据链路超时后的冷却截止时间（UTC），避免每个文件都白等</summary>
+    private DateTime _noDataLinkUntil = DateTime.MinValue;
 
     /// <summary>当前正在接收的文件夹批次（非批次平铺接收时为 null）</summary>
     private BatchReceiver? _batch;
@@ -54,7 +87,13 @@ public sealed class PhoneLink : IDisposable
     public bool IsConnected { get; private set; }
     public string PhoneName { get; private set; } = "";
 
-    /// <summary>当前连接设备的地址（未连接为 null；菜单打勾用）</summary>
+    /// <summary>当前通道是否走 Wi-Fi</summary>
+    public bool IsWifi { get; private set; }
+
+    /// <summary>当前通道描述（菜单与托盘显示用）</summary>
+    public string TransportDescription { get; private set; } = "";
+
+    /// <summary>当前连接设备的蓝牙地址（走 Wi-Fi 时为 null；菜单打勾用）</summary>
     public string? ConnectedAddress { get; private set; }
 
     /// <summary>收到文本（在后台线程回调，调用方需自行切到 UI 线程）</summary>
@@ -71,6 +110,67 @@ public sealed class PhoneLink : IDisposable
 
     /// <summary>连接状态变化</summary>
     public event Action<bool, string>? ConnectionChanged;
+
+    /// <summary>收到 NET_INFO 并记住了新的 TCP 数据通道端点（控制链路用于唤醒数据链路）</summary>
+    public event Action? NetworkEndpointUpdated;
+
+    /// <summary>控制链路持有的 TCP 数据链路：文件和文件夹优先走它</summary>
+    internal PhoneLink? DataLink { get; set; }
+
+    public PhoneLink(PhoneLinkRole role = PhoneLinkRole.Control)
+    {
+        _role = role;
+    }
+
+    /// <summary>立即唤醒守护循环（例如刚拿到新的 NET_INFO 端点）</summary>
+    public void RequestConnectNow() => Wake();
+
+    /// <summary>
+    /// 数据链路守护：蓝牙控制链路在线时尝试建立 TCP 数据链路，
+    /// 连上后断开自动重连；控制链路离线则关闭数据链路并空转等待。
+    /// </summary>
+    public async Task SuperviseDataAsync(Func<bool> controlOnline, CancellationToken ct = default)
+    {
+        while (!ct.IsCancellationRequested && !_disposed)
+        {
+            if (!controlOnline())
+            {
+                // 没有控制链路时连数据链路没有意义，也会被手机拒绝
+                if (IsConnected) DisconnectCore(notify: false);
+                try { await DelayOrWake(TimeSpan.FromSeconds(1), ct); }
+                catch (OperationCanceledException) { return; }
+                continue;
+            }
+
+            if (IsConnected)
+            {
+                try { await DelayOrWake(TimeSpan.FromSeconds(1), ct); }
+                catch (OperationCanceledException) { return; }
+                continue;
+            }
+
+            bool ok;
+            try
+            {
+                ok = await ConnectDataAsync(ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[PhoneLink] 数据链路连接异常：{ex.Message}");
+                ok = false;
+            }
+
+            if (!ok && !ct.IsCancellationRequested)
+            {
+                try { await DelayOrWake(DataRetryDelay, ct); }
+                catch (OperationCanceledException) { return; }
+            }
+        }
+    }
 
     /// <summary>
     /// 常驻守护：保持连接，断开后每 5 秒重试一次，直到 <paramref name="ct"/> 取消。
@@ -167,7 +267,7 @@ public sealed class PhoneLink : IDisposable
             return;
         }
 
-        // 1) 先试上次成功的地址，避免每次都做全量蓝牙查询
+        // 1) 先试上次成功的蓝牙地址，避免每次都做全量蓝牙查询
         var saved = RelaySettings.LoadPhoneAddress();
         if (!string.IsNullOrWhiteSpace(saved) && TryParseAddress(saved, out var cached))
         {
@@ -245,12 +345,77 @@ public sealed class PhoneLink : IDisposable
             return false;
         }
 
+        var ok = await FinishConnectAsync(
+            new BluetoothRelayTransport(client, stream), name, address.ToString(), ct);
+        if (ok)
+        {
+            RelaySettings.SavePhone(address.ToString(), name);
+        }
+        return ok;
+    }
+
+    /// <summary>
+    /// 建立独立的 TCP 数据链路：连上后先 HELLO，再发带 role=data 的 IDENT，
+    /// 手机据此把这条连接挂到同一台 PC 的蓝牙控制会话上（不会断蓝牙）。
+    /// </summary>
+    private async Task<bool> ConnectDataAsync(CancellationToken ct)
+    {
+        var endpoint = RelaySettings.LoadWifiEndpoint();
+        if (endpoint is null) return false;
+
+        var (host, port) = endpoint.Value;
+        var client = new TcpClient();
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(DataConnectTimeoutSeconds));
+            await client.ConnectAsync(host, port, timeout.Token);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            client.Dispose();
+            throw;
+        }
+        catch (Exception ex)
+        {
+            client.Dispose();
+            Debug.WriteLine($"[PhoneLink] 数据链路连接 {host}:{port} 失败：{ex.Message}");
+            return false;
+        }
+
+        try
+        {
+            client.NoDelay = true;
+            client.SendBufferSize = 256 * 1024;
+            client.ReceiveBufferSize = 256 * 1024;
+        }
+        catch { }
+
+        var name = RelaySettings.LoadPhoneName() ?? host;
+        var ok = await FinishConnectAsync(new TcpRelayTransport(client), name, null, ct);
+        if (ok)
+        {
+            RelayLog.Write($"数据通道已建立 {host}:{port}");
+        }
+        return ok;
+    }
+
+    /// <summary>
+    /// 通道建好之后的统一收尾：登记状态 → 报 HELLO 与 IDENT → 起读循环。
+    /// 蓝牙控制链路与数据链路共用这一段，避免两条路径各写一份。
+    /// </summary>
+    private async Task<bool> FinishConnectAsync(
+        IRelayTransport transport, string name, string? btAddress, CancellationToken ct)
+    {
+        var isData = _role == PhoneLinkRole.Data;
         lock (_gate)
         {
-            _client = client;
-            _stream = stream;
+            _transport = transport;
             PhoneName = name;
-            ConnectedAddress = address.ToString();
+            ConnectedAddress = btAddress;
+            IsWifi = transport.IsWifi;
+            TransportDescription = transport.Description;
+            _chunkSize = transport.IsWifi ? RelaySettings.LoadWifiChunk() : Protocol.MaxChunk;
             IsConnected = true;
         }
 
@@ -258,6 +423,9 @@ public sealed class PhoneLink : IDisposable
         {
             // 报身份（手机端 5 秒内收不到 HELLO 会主动断开）
             await SendAsync(Protocol.Hello(Environment.MachineName), ct);
+            // 走 TCP 时手机拿不到蓝牙 MAC，补一个 IDENT 让它把会话认回这台电脑；
+            // 数据链路额外带 role=data，手机只把它挂到控制会话上，不会断蓝牙。
+            await SendAsync(Protocol.Ident(BuildIdent(transport.IsWifi, isData)), ct);
         }
         catch (Exception ex)
         {
@@ -266,11 +434,50 @@ public sealed class PhoneLink : IDisposable
             return false;
         }
 
-        RelaySettings.SavePhone(address.ToString(), name);
-        ConnectionChanged?.Invoke(true, name);
-
+        // 数据链路不算「手机连接状态」，状态与托盘只反映蓝牙控制链路
+        if (!isData) ConnectionChanged?.Invoke(true, name);
         StartReadLoop();
         return true;
+    }
+
+    /// <summary>IDENT 载荷：优先让手机用蓝牙 MAC 当会话键，保持历史转发组不失配</summary>
+    private static string BuildIdent(bool wifi, bool dataRole)
+    {
+        var payload = new Dictionary<string, object?>
+        {
+            ["id"] = RelaySettings.LocalPeerId(),
+            ["bt"] = LocalBluetoothAddress(),
+            ["platform"] = "win",
+            ["transport"] = wifi ? "tcp" : "bt",
+        };
+        // 只有独立数据链路才带 role；兜底整条 TCP 会话必须保持旧行为
+        if (dataRole) payload["role"] = "data";
+        return System.Text.Json.JsonSerializer.Serialize(payload);
+    }
+
+    /// <summary>本机蓝牙适配器地址（拿不到就返回 null，手机退回用 id）</summary>
+    private static string? LocalBluetoothAddress()
+    {
+        try
+        {
+            // 32feet 4.1.40 的 .NET 8 构建里没有 BluetoothRadio.PrimaryRadio，
+            // 这里改用项目 TFM 自带的 WinRT 适配器接口（PairedDevices.cs 已在用同名空间）。
+            var adapter = Windows.Devices.Bluetooth.BluetoothAdapter
+                .GetDefaultAsync().AsTask().GetAwaiter().GetResult();
+            var value = adapter?.BluetoothAddress ?? 0;
+            if (value == 0) return null;
+            var bytes = new[]
+            {
+                (byte)(value >> 40), (byte)(value >> 32), (byte)(value >> 24),
+                (byte)(value >> 16), (byte)(value >> 8), (byte)value,
+            };
+            return string.Join(":", bytes.Select(b => b.ToString("X2")));
+        }
+        catch
+        {
+            // 未打包的桌面程序可能拿不到适配器信息；返回 null 由 id 兜底
+            return null;
+        }
     }
 
     private void StartReadLoop()
@@ -290,7 +497,7 @@ public sealed class PhoneLink : IDisposable
             {
                 while (!token.IsCancellationRequested && IsConnected)
                 {
-                    var stream = _stream;
+                    var stream = _transport?.Stream;
                     if (stream is null) break;
 
                     var frame = await Task.Run(() => Protocol.Read(stream), token);
@@ -348,6 +555,10 @@ public sealed class PhoneLink : IDisposable
                 if (frame.NeedAck) await SendAsync(Protocol.Ack(frame.Type), ct);
                 break;
             }
+
+            case Protocol.FrameType.NetInfo:
+                HandleNetInfo(frame);
+                break;
 
             case Protocol.FrameType.BatchMeta:
             {
@@ -533,7 +744,93 @@ public sealed class PhoneLink : IDisposable
         }
     }
 
-    /// <summary>发送文本到手机（手机 UI 会收到一条记录，可一键转发给另一台 PC）</summary>
+    /// <summary>
+    /// 手机下发的 TCP 数据通道端点。
+    ///
+    /// 双通道模式下蓝牙控制链路必须常驻：这里只记住端点并唤醒数据链路，
+    /// 绝不断开蓝牙。分块大小只对 TCP 生效，蓝牙固定 4 KB。
+    /// </summary>
+    private void HandleNetInfo(Protocol.Frame frame)
+    {
+        try
+        {
+            var obj = System.Text.Json.JsonDocument
+                .Parse(Encoding.UTF8.GetString(frame.Payload)).RootElement;
+
+            var port = obj.TryGetProperty("port", out var p) && p.TryGetInt32(out var pv) ? pv : 0;
+            var chunk = obj.TryGetProperty("chunk", out var c) && c.TryGetInt32(out var cv)
+                ? cv : RelaySettings.DefaultTcpChunk;
+
+            var ips = new List<string>();
+            if (obj.TryGetProperty("ips", out var arr) &&
+                arr.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                foreach (var item in arr.EnumerateArray())
+                {
+                    var text = item.GetString();
+                    if (!string.IsNullOrWhiteSpace(text)) ips.Add(text);
+                }
+            }
+
+            if (port <= 0 || ips.Count == 0)
+            {
+                // 手机没连 Wi-Fi：控制链路继续走蓝牙；兜底 TCP 会话不用清自己的端点
+                if (_role == PhoneLinkRole.Control && !IsWifi)
+                {
+                    _hasWifiEndpoint = false;
+                    RelaySettings.ClearWifiEndpoint();
+                    RelayLog.Write("手机未提供数据通道端点（可能没连 Wi-Fi），继续走蓝牙");
+                }
+                return;
+            }
+
+            var host = PreferLanAddress(ips);
+            if (chunk > 0)
+            {
+                var clamped = Math.Clamp(chunk, Protocol.MaxChunk, 256 * 1024);
+                RelaySettings.SaveWifiChunk(clamped);
+                // 只有当前就在 TCP 上的链路才立即改用新分块
+                if (_role == PhoneLinkRole.Data || IsWifi) _chunkSize = clamped;
+            }
+
+            RelaySettings.SaveWifiEndpoint(host, port);
+
+            if (_role == PhoneLinkRole.Data)
+            {
+                // 已经在这条数据链路上；端点若变化，下次断线重连会自动用新地址
+                return;
+            }
+
+            _hasWifiEndpoint = true;
+            RelayLog.Write($"手机提供数据通道端点 {host}:{port}");
+            NetworkEndpointUpdated?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            RelayLog.Write($"NET_INFO 解析失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>多网卡时优先内网地址（192.168 / 10 / 172.16-31），其余按原顺序兜底</summary>
+    private static string PreferLanAddress(IReadOnlyList<string> ips)
+    {
+        foreach (var ip in ips)
+        {
+            if (ip.StartsWith("192.168.", StringComparison.Ordinal) ||
+                ip.StartsWith("10.", StringComparison.Ordinal))
+                return ip;
+        }
+        foreach (var ip in ips)
+        {
+            if (!ip.StartsWith("172.", StringComparison.Ordinal)) continue;
+            var parts = ip.Split('.');
+            if (parts.Length > 1 && int.TryParse(parts[1], out var second) && second is >= 16 and <= 31)
+                return ip;
+        }
+        return ips[0];
+    }
+
+    /// <summary>发送文本到手机（文本始终走蓝牙控制链路）</summary>
     public async Task SendTextAsync(string content)
     {
         if (!IsConnected) throw new IOException(Strings.NotConnected);
@@ -548,9 +845,45 @@ public sealed class PhoneLink : IDisposable
         }
     }
 
-    /// <summary>发送文件到手机</summary>
+    /// <summary>
+    /// 发送前等 Wi-Fi 数据链路就绪（不区分文件大小）。
+    ///
+    /// 手机下发 NET_INFO 后 PC 才开始建 TCP，用户刚好在这段时间点发送时，
+    /// 直接走蓝牙会让小文件看起来「优先蓝牙」。这里给 TCP 3 秒优先窗口，
+    /// 等不到才兜底；连续等不到则冷却 30 秒，避免没有 Wi-Fi 时每个文件都等。
+    /// </summary>
+    private async Task<PhoneLink?> WaitForDataLinkAsync(CancellationToken ct)
+    {
+        if (DataLink is { IsConnected: true } connected) return connected;
+        if (_role != PhoneLinkRole.Control || !_hasWifiEndpoint) return null;
+        if (DateTime.UtcNow < _noDataLinkUntil) return null;
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (DataLink is { IsConnected: true } link) return link;
+            await Task.Delay(100, ct);
+        }
+        _noDataLinkUntil = DateTime.UtcNow.AddSeconds(30);
+        RelayLog.Write("TCP 数据链路未就绪，本次文件改走蓝牙");
+        return null;
+    }
+
+    /// <summary>发送文件到手机（优先 TCP，等不到数据链路才走蓝牙）</summary>
     public async Task SendFileAsync(string path)
     {
+        if (DataLink is { IsConnected: true } data)
+        {
+            await data.SendFileAsync(path);
+            return;
+        }
+
+        if (await WaitForDataLinkAsync(CancellationToken.None) is { } link)
+        {
+            await link.SendFileAsync(path);
+            return;
+        }
+
         if (!IsConnected) throw new IOException(Strings.NotConnected);
         var bytes = await File.ReadAllBytesAsync(path);
         var name = Path.GetFileName(path);
@@ -565,9 +898,9 @@ public sealed class PhoneLink : IDisposable
         try
         {
             await SendAsync(Protocol.FileMeta(meta), CancellationToken.None);
-            for (int off = 0; off < bytes.Length; off += Protocol.MaxChunk)
+            for (int off = 0; off < bytes.Length; off += _chunkSize)
             {
-                int len = Math.Min(Protocol.MaxChunk, bytes.Length - off);
+                int len = Math.Min(_chunkSize, bytes.Length - off);
                 await SendAsync(Protocol.Chunk(bytes, off, len), CancellationToken.None);
             }
             await SendAsync(Protocol.FileEnd(), CancellationToken.None);
@@ -587,6 +920,12 @@ public sealed class PhoneLink : IDisposable
     /// </summary>
     public async Task<FolderSendResult> SendFolderAsync(string folderPath, CancellationToken ct = default)
     {
+        if (DataLink is { IsConnected: true } data)
+            return await data.SendFolderAsync(folderPath, ct);
+
+        if (await WaitForDataLinkAsync(ct) is { } link)
+            return await link.SendFolderAsync(folderPath, ct);
+
         if (!IsConnected) throw new IOException(Strings.NotConnected);
         if (!Directory.Exists(folderPath)) throw new IOException("Folder does not exist");
 
@@ -626,9 +965,9 @@ public sealed class PhoneLink : IDisposable
 
                 var name = Path.GetFileName(file.RelativePath.Replace('/', Path.DirectorySeparatorChar));
                 await SendAsync(Protocol.FileMeta(name, bytes.Length, file.RelativePath, id), ct);
-                for (int off = 0; off < bytes.Length; off += Protocol.MaxChunk)
+                for (int off = 0; off < bytes.Length; off += _chunkSize)
                 {
-                    int len = Math.Min(Protocol.MaxChunk, bytes.Length - off);
+                    int len = Math.Min(_chunkSize, bytes.Length - off);
                     await SendAsync(Protocol.Chunk(bytes, off, len), ct);
                 }
                 await SendAsync(Protocol.FileEnd(), ct);
@@ -797,7 +1136,7 @@ public sealed class PhoneLink : IDisposable
 
     private async Task SendAsync(Protocol.Frame frame, CancellationToken ct)
     {
-        var stream = _stream ?? throw new IOException("Connection not established");
+        var stream = _transport?.Stream ?? throw new IOException("Connection not established");
         await _sendLock.WaitAsync(ct);
         try
         {
@@ -809,7 +1148,14 @@ public sealed class PhoneLink : IDisposable
         }
     }
 
-    public void Disconnect()
+    public void Disconnect() => DisconnectCore(notify: true);
+
+    /// <summary>
+    /// 断开当前通道。
+    /// <paramref name="notify"/> = false 时不上报「已断开」——从蓝牙切到 Wi-Fi 时用，
+    /// 否则托盘会闪一条「手机已断开」的提示，其实只是换了条通道。
+    /// </summary>
+    private void DisconnectCore(bool notify)
     {
         bool wasConnected;
         lock (_gate)
@@ -823,20 +1169,18 @@ public sealed class PhoneLink : IDisposable
             _pendingRelativePath = null;
             _ignoreCurrentFile = false;
 
-            var stream = _stream;
-            var client = _client;
-            _stream = null;
-            _client = null;
+            var transport = _transport;
+            _transport = null;
 
             try { _readCts?.Cancel(); } catch { }
             try { _readCts?.Dispose(); } catch { }
             _readCts = null;
 
-            try { stream?.Dispose(); } catch { }
-            try { client?.Dispose(); } catch { }
+            try { transport?.Dispose(); } catch { }
         }
 
-        if (wasConnected) ConnectionChanged?.Invoke(false, PhoneName);
+        if (wasConnected && notify && _role == PhoneLinkRole.Control)
+            ConnectionChanged?.Invoke(false, PhoneName);
     }
 
     /// <summary>解析 12 位十六进制地址（32feet 的 Parse 会抛异常，这里统一兜住）</summary>

@@ -69,7 +69,11 @@ cd BlueDeskRelayMac
 - 服务 UUID：`a3bd7f2e-5c14-4a9e-9d1b-2f6e8c04bde1`（与手机端 `TransferProtocol.SERVICE_UUID` 一致）
 - 帧格式：11 字节头（MAGIC/版本/类型/FLAGS/长度/CRC32低16位）+ 载荷，详见 `Protocol.swift`
   与手机端 `TransferProtocol.kt`、Windows 端 `Protocol.cs` 逐字节对齐；文件按 4KB 分块
-- 注意：SPP 通道实测约 50~200 KB/s，适合文本与几 MB 以内的小文件
+- 发送通道：所有写操作由一条专属写线程串行完成，帧按通道 MTU 切片写入
+  （`writeSync` 单次写入不得超过 MTU）；缓冲满等暂时性错误退避重试，
+  只有通道关闭 / 设备消失才判定断线。文件按块从磁盘流式读取，待写队列有上限（背压），
+  内存占用与文件大小无关
+- 注意：SPP 通道实测约 50~200 KB/s，适合文本与几十 MB 以内的文件
 
 ## 源码结构
 

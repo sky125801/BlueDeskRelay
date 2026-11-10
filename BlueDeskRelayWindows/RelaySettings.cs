@@ -17,12 +17,22 @@ internal static class RelaySettings
     /// <summary>手机未下发 CONFIG 时的默认传输上限（64 MB）</summary>
     public const long DefaultMaxBytes = 64L * 1024 * 1024;
 
+    /// <summary>TCP 数据通道的默认分块大小；手机可通过 NET_INFO 的 chunk 字段覆盖</summary>
+    public const int DefaultTcpChunk = 64 * 1024;
+
     private sealed class Model
     {
         public string? PhoneAddress { get; set; }
         public string? PhoneName { get; set; }
         /// <summary>手机统一下发的传输上限；0 = 不限</summary>
         public long MaxBytes { get; set; } = DefaultMaxBytes;
+        /// <summary>手机 Wi-Fi 数据通道的地址（由手机通过 NET_INFO 下发）</summary>
+        public string? WifiHost { get; set; }
+        public int WifiPort { get; set; }
+        /// <summary>TCP 数据通道分块大小（手机通过 NET_INFO 下发）</summary>
+        public int WifiChunk { get; set; } = DefaultTcpChunk;
+        /// <summary>本机稳定标识：TCP 接入时手机拿不到 MAC，靠它把会话认回同一台电脑</summary>
+        public string? PeerId { get; set; }
     }
 
     private static readonly object Gate = new();
@@ -103,7 +113,79 @@ internal static class RelaySettings
             var model = Current();
             model.PhoneAddress = null;
             model.PhoneName = null;
+            model.WifiHost = null;
+            model.WifiPort = 0;
             Persist();
+        }
+    }
+
+    // ------------------------------------------------------------
+    // Wi-Fi 数据通道
+    // ------------------------------------------------------------
+
+    /// <summary>已记住的 Wi-Fi 端点；null 表示还没拿到（只能走蓝牙）</summary>
+    public static (string Host, int Port)? LoadWifiEndpoint()
+    {
+        var model = Current();
+        if (string.IsNullOrWhiteSpace(model.WifiHost) || model.WifiPort <= 0) return null;
+        return (model.WifiHost, model.WifiPort);
+    }
+
+    public static void SaveWifiEndpoint(string host, int port)
+    {
+        lock (Gate)
+        {
+            var model = Current();
+            if (model.WifiHost == host && model.WifiPort == port) return;
+            model.WifiHost = host;
+            model.WifiPort = port;
+            Persist();
+        }
+    }
+
+    /// <summary>忘掉端点：手机换了网络、或连续连不上时调用，下次靠蓝牙重新拿</summary>
+    public static void ClearWifiEndpoint()
+    {
+        lock (Gate)
+        {
+            var model = Current();
+            if (model.WifiHost is null && model.WifiPort == 0) return;
+            model.WifiHost = null;
+            model.WifiPort = 0;
+            Persist();
+        }
+    }
+
+    /// <summary>TCP 数据通道的分块大小（已按协议上限收敛）</summary>
+    public static int LoadWifiChunk()
+    {
+        var value = Current().WifiChunk;
+        if (value <= 0) return DefaultTcpChunk;
+        return Math.Clamp(value, Protocol.MaxChunk, 256 * 1024);
+    }
+
+    public static void SaveWifiChunk(int chunk)
+    {
+        if (chunk <= 0) return;
+        lock (Gate)
+        {
+            var model = Current();
+            if (model.WifiChunk == chunk) return;
+            model.WifiChunk = chunk;
+            Persist();
+        }
+    }
+
+    /// <summary>本机稳定标识（首次调用生成并持久化）</summary>
+    public static string LocalPeerId()
+    {
+        lock (Gate)
+        {
+            var model = Current();
+            if (!string.IsNullOrWhiteSpace(model.PeerId)) return model.PeerId;
+            model.PeerId = Guid.NewGuid().ToString("N");
+            Persist();
+            return model.PeerId;
         }
     }
 

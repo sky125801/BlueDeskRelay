@@ -24,6 +24,10 @@ as a relay, so any endpoint can exchange content with it, and can also forward t
 > The data channel is independent of the HID (keyboard/mouse) channel, so a single
 > Bluetooth pairing serves both at the same time.
 
+When the phone is on Wi-Fi, the PC opens a second **Wi-Fi (TCP) data channel**: Bluetooth keeps
+handling discovery and control, while file frames move over the LAN — throughput goes from
+50~200 KB/s to tens of MB/s. If Wi-Fi is unavailable the client silently falls back to Bluetooth.
+
 This repository holds one implementation per platform. They share the same wire protocol,
 so they **interoperate freely** — Windows sending to macOS, or Android to Windows, both work.
 

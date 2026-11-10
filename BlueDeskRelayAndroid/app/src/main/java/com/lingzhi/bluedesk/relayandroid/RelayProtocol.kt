@@ -43,6 +43,12 @@ object RelayProtocol {
         const val CONFIG = 0x0A
         const val BATCH_META = 0x0B
         const val BATCH_END = 0x0C
+
+        /** 网络端点（手机 → PC）：{"port":47654,"ips":["192.168.1.23"],"name":"BlueDesk-A1B2C3"} */
+        const val NET_INFO = 0x0D
+
+        /** 身份补充（PC → 手机）：{"id":"uuid","bt":"AA:BB:..","platform":"android","transport":"tcp","role":"data"} */
+        const val IDENT = 0x0E
     }
 
     private const val FLAG_NEED_ACK = 0x01
@@ -145,6 +151,9 @@ object RelayProtocol {
     fun ack(ofType: Int) = Frame(FrameType.ACK, byteArrayOf(ofType.toByte()))
     fun pong() = Frame(FrameType.PONG, ByteArray(0))
     fun error(message: String) = Frame(FrameType.ERROR, message.toByteArray(Charsets.UTF_8))
+
+    fun netInfo(json: String) = Frame(FrameType.NET_INFO, json.toByteArray(Charsets.UTF_8))
+    fun ident(json: String) = Frame(FrameType.IDENT, json.toByteArray(Charsets.UTF_8))
 
     /** FILE_META → CHUNK* → FILE_END 的接收组装器 */
     class FileAssembler(var maxBytes: Long = MAX_FILE) {

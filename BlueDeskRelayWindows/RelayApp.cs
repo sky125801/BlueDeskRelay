@@ -25,6 +25,7 @@ public sealed class RelayApp : Form
     private const uint VkF = 0x46;
 
     private readonly PhoneLink _link = new();
+    private readonly PhoneLink _dataLink = new(PhoneLinkRole.Data);
     private readonly NotifyIcon _tray;
     private readonly ToolStripMenuItem _statusItem;
     private readonly ToolStripMenuItem _connectItem;
@@ -51,6 +52,9 @@ public sealed class RelayApp : Form
 
     public RelayApp(IReadOnlyList<string>? initialFiles = null)
     {
+        // 控制链路持有数据链路：发送文件/文件夹时优先走 TCP
+        _link.DataLink = _dataLink;
+
         // 隐藏主窗体（仅作为消息宿主）
         ShowInTaskbar = false;
         WindowState = FormWindowState.Minimized;
@@ -100,8 +104,17 @@ public sealed class RelayApp : Form
 
         _link.ConnectionChanged += (connected, name) => Post(() =>
         {
+            // 蓝牙控制链路断开时，数据链路也一并关闭（重连后手机会重新下发端点）
+            if (!connected) _dataLink.Disconnect();
+
             RelayLog.Write(connected ? Strings.Format(Strings.ConnectedFormat, name) : Strings.Format(Strings.DisconnectedFormat, name));
-            _statusItem.Text = connected ? Strings.Format(Strings.ConnectedFormat, name) : Strings.NotConnectedReconnecting;
+            // 连接后把当前通道也标出来：蓝牙还是 Wi-Fi，一眼能看出有没有走快通道
+            var transport = _link.TransportDescription;
+            _statusItem.Text = connected
+                ? (string.IsNullOrEmpty(transport)
+                    ? Strings.Format(Strings.ConnectedFormat, name)
+                    : Strings.Format(Strings.TransportFormat, name, transport))
+                : Strings.NotConnectedReconnecting;
             _sendClipItem.Enabled = connected;
             _sendFileItem.Enabled = connected;
             _sendFolderItem.Enabled = connected;
@@ -135,26 +148,20 @@ public sealed class RelayApp : Form
             }
         });
 
-        _link.FileReceived += (path, size) => Post(() =>
-        {
-            RelayLog.Write($"收到文件 {path}（{Strings.FormatSize(size)}）");
-            _tray.ShowBalloonTip(3000, Strings.FileReceivedTitle,
-                Strings.Format(Strings.FileReceivedBodyFormat, Path.GetFileName(path), Strings.FormatSize(size), Path.GetDirectoryName(path) ?? PhoneLink.GetReceiveDir()),
-                ToolTipIcon.Info);
-        });
+        // 文件/文件夹可能从蓝牙控制链路或 TCP 数据链路到达，两个实例共用同一套 UI 反馈
+        _link.FileReceived += OnFileReceived;
+        _dataLink.FileReceived += OnFileReceived;
 
         // 手机下发传输上限：仅刷新菜单文案（0 显示「不限」）
-        _link.MaxBytesChanged += max => Post(() =>
-        {
-            _maxBytesItem.Text = Strings.MaxBytesText(max);
-        });
+        _link.MaxBytesChanged += OnMaxBytesChanged;
+        _dataLink.MaxBytesChanged += OnMaxBytesChanged;
 
         // 文件夹批次收完只弹一次气泡；单个文件不再逐个提示
-        _link.FolderReceived += (folder, files) => Post(() =>
-        {
-            _tray.ShowBalloonTip(3000, Strings.FolderReceivedTitle,
-                Strings.Format(Strings.FolderReceivedBodyFormat, folder, files), ToolTipIcon.Info);
-        });
+        _link.FolderReceived += OnFolderReceived;
+        _dataLink.FolderReceived += OnFolderReceived;
+
+        // NET_INFO 到达后立刻唤醒数据链路，不用干等重试间隔
+        _link.NetworkEndpointUpdated += () => _dataLink.RequestConnectNow();
 
         // 全局热键 Ctrl+Alt+B（剪贴板）；Ctrl+Alt+F（发送资源管理器里选中的文件）
         if (!RegisterHotKey(Handle, HotkeyId, ModControl | ModAlt, VkB))
@@ -170,6 +177,10 @@ public sealed class RelayApp : Form
 
         // 自动连接 + 断线重连（常驻后台，直到退出）
         _ = Task.Run(() => _link.SuperviseAsync(_lifeCts.Token));
+
+        // 数据链路守护：只在蓝牙控制链路在线时连接（端点由手机 NET_INFO 下发）
+        _ = Task.Run(() => _dataLink.SuperviseDataAsync(
+            () => _link.IsConnected && !_link.IsWifi, _lifeCts.Token));
 
         // 预取已配对设备，保证「连接设备」菜单展开即有内容
         _ = RefreshPairedAsync();
@@ -288,6 +299,25 @@ public sealed class RelayApp : Form
         catch (ObjectDisposedException) { }
         catch (InvalidOperationException) { }
     }
+
+    private void OnFileReceived(string path, long size) => Post(() =>
+    {
+        RelayLog.Write($"收到文件 {path}（{Strings.FormatSize(size)}）");
+        _tray.ShowBalloonTip(3000, Strings.FileReceivedTitle,
+            Strings.Format(Strings.FileReceivedBodyFormat, Path.GetFileName(path), Strings.FormatSize(size), Path.GetDirectoryName(path) ?? PhoneLink.GetReceiveDir()),
+            ToolTipIcon.Info);
+    });
+
+    private void OnFolderReceived(string folder, int files) => Post(() =>
+    {
+        _tray.ShowBalloonTip(3000, Strings.FolderReceivedTitle,
+            Strings.Format(Strings.FolderReceivedBodyFormat, folder, files), ToolTipIcon.Info);
+    });
+
+    private void OnMaxBytesChanged(long max) => Post(() =>
+    {
+        _maxBytesItem.Text = Strings.MaxBytesText(max);
+    });
 
     protected override void WndProc(ref Message m)
     {
@@ -548,6 +578,7 @@ public sealed class RelayApp : Form
         _quitting = true;
         try { _lifeCts.Cancel(); } catch { }
         _link.Dispose();
+        _dataLink.Dispose();
         _tray.Visible = false;
         _tray.Dispose();
         Application.Exit();
@@ -562,6 +593,7 @@ public sealed class RelayApp : Form
             _quitting = true;
             try { _lifeCts.Cancel(); } catch { }
             _link.Dispose();
+            _dataLink.Dispose();
             _tray.Visible = false;
             _tray.Dispose();
         }

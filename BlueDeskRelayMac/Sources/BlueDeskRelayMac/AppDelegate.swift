@@ -22,6 +22,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// 手机未连接时先排队的文件，连上后自动补发
     private var pendingFiles: [URL] = []
+    /// 上一次的连接状态：数据链路切换也会触发 onStateChange，避免重复弹「已连接」
+    private var phoneConnected = false
 
     private enum HotkeyID: UInt32 {
         case clipboard = 0xBDEC
@@ -105,6 +107,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                          L10n.t("file.receivedBody",
                                 FileManager.default.displayName(atPath: path), formatSize(size)))
         }
+        link.onFolder = { [weak self] path, count in
+            self?.notify(L10n.t("folder.received"),
+                         L10n.t("folder.receivedBody",
+                                FileManager.default.displayName(atPath: path), count))
+        }
+        link.onFileSent = { [weak self] name, size in
+            self?.notify(L10n.t("file.sent"), L10n.t("file.sentBody", name, formatSize(size)))
+        }
         link.onError = { [weak self] message in
             self?.notify(L10n.t("app.name"), message)
         }
@@ -174,23 +184,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - 状态
 
     private func updateStatus(connected: Bool, name: String) {
-        statusMenuItem.title = connected ? L10n.t("status.connected", name) : L10n.t("status.notConnected")
+        statusMenuItem.title = connected
+            ? L10n.t("status.connectedTransport", name, link.transportDescription)
+            : L10n.t("status.notConnected")
         sendClipItem.isEnabled = connected
         sendFileItem.isEnabled = connected
         sendSelectedItem.isEnabled = connected
         disconnectItem.isEnabled = connected
         if connected {
-            notify(L10n.t("app.name"), L10n.t("status.connected", name))
+            // 数据链路建立/断开也会走到这里，只在真正从断开变成连接时提示
+            if !phoneConnected {
+                notify(L10n.t("app.name"), L10n.t("status.connected", name))
 
-            // 右键 / 快捷键送来的文件可能在连接前就排队了，这里补发
-            if !pendingFiles.isEmpty {
-                let queued = pendingFiles
-                pendingFiles.removeAll()
-                for url in queued { sendFileURL(url) }
+                // 右键 / 快捷键送来的文件可能在连接前就排队了，这里补发
+                if !pendingFiles.isEmpty {
+                    let queued = pendingFiles
+                    pendingFiles.removeAll()
+                    for url in queued { sendFileURL(url) }
+                }
             }
-        } else {
+        } else if phoneConnected {
             notify(L10n.t("app.name"), L10n.t("status.phoneDisconnected"))
         }
+        phoneConnected = connected
     }
 
     // MARK: - NSMenuDelegate（「连接设备」子菜单展开时动态重建）
@@ -401,11 +417,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 }
 
 private func formatSize(_ bytes: Int) -> String {
-    if bytes >= 1024 * 1024 {
-        String(format: "%.1f MB", Double(bytes) / 1024 / 1024)
-    } else if bytes >= 1024 {
-        String(format: "%.1f KB", Double(bytes) / 1024)
-    } else {
-        "\(bytes) B"
-    }
+    ByteSize.human(bytes)
 }
