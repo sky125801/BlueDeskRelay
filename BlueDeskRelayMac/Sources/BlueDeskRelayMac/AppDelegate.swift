@@ -168,6 +168,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         link.onError = { [weak self] message in
             self?.notify(L10n.t("app.name"), message)
         }
+        // 手机掉线（蓝牙断开）→ 按手机端配置决定是否锁屏
+        link.onControlLinkLost = { [weak self] in
+            self?.lockScreenIfNeeded()
+        }
 
         // 自动连接 + 断线重连（加 common mode，拖菜单时不暂停）
         link.connect()
@@ -326,6 +330,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func disconnectPhone() {
         link.disconnectManual()
+    }
+
+    // MARK: - 断开锁屏
+
+    /// 应用正在退出：手机链路随进程关闭，此时不能锁屏
+    private var isTerminating = false
+
+    func applicationWillTerminate(_ notification: Notification) {
+        isTerminating = true
+    }
+
+    /// 手机端可配置（默认开启）：蓝牙控制链路断开时锁定当前 Mac。
+    /// 只响应「手机掉线」，菜单里主动断开、退出应用都不锁。
+    private func lockScreenIfNeeded() {
+        guard !isTerminating, link.lockOnDisconnect else { return }
+        NSLog("[AppDelegate] 手机链断开，锁定屏幕")
+        ScreenLock.lock()
     }
 
     // MARK: - 发送
@@ -559,6 +580,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
 private func formatSize(_ bytes: Int) -> String {
     ByteSize.human(bytes)
+}
+
+/// 锁定屏幕。
+///
+/// 首选 login.framework 的 `SACLockScreenImmediate`：这是系统自己锁屏用的入口，
+/// 不需要辅助功能权限（辅助功能权限每次重新签名都会失效，靠它发 Ctrl+Cmd+Q 不可靠）。
+/// 拿不到符号时再退到 System Events 快捷键，最后才是老系统上的 CGSession。
+enum ScreenLock {
+    private typealias LockFn = @convention(c) () -> Int32
+
+    static func lock() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            if lockViaLoginFramework() { return }
+            let script = "tell application \"System Events\" to keystroke \"q\" using {control down, command down}"
+            if run("/usr/bin/osascript", ["-e", script]) { return }
+            let legacy = "/System/Library/CoreServices/Menu Extras/User.menu/Contents/Resources/CGSession"
+            if FileManager.default.isExecutableFile(atPath: legacy) {
+                _ = run(legacy, ["-suspend"])
+            }
+        }
+    }
+
+    /// 直接调 login.framework 的锁屏函数（系统私有 API，但不需要任何权限）
+    private static func lockViaLoginFramework() -> Bool {
+        guard let handle = dlopen("/System/Library/PrivateFrameworks/login.framework/login", RTLD_NOW),
+              let symbol = dlsym(handle, "SACLockScreenImmediate") else {
+            NSLog("[ScreenLock] login.framework 不可用，改用系统事件")
+            return false
+        }
+        defer { dlclose(handle) }
+        let fn = unsafeBitCast(symbol, to: LockFn.self)
+        let status = fn()
+        NSLog("[ScreenLock] SACLockScreenImmediate → \(status)")
+        return status == 0
+    }
+
+    private static func run(_ path: String, _ args: [String]) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = args
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            NSLog("[ScreenLock] \(path) 启动失败：\(error.localizedDescription)")
+            return false
+        }
+    }
 }
 
 extension AppDelegate: UNUserNotificationCenterDelegate {

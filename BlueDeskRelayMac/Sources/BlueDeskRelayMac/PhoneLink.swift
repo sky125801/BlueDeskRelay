@@ -38,6 +38,31 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     var onStateChange: ((Bool, String) -> Void)?
     /// 需要在气泡里展示的错误
     var onError: ((String) -> Void)?
+    /// 控制链路意外断开（手机端离开范围 / 蓝牙掉线）；主动断开与退出应用不会触发
+    var onControlLinkLost: (() -> Void)?
+
+    /// 通道打开后是否已收到手机的任何一帧。
+    ///
+    /// Android 每次重启中转服务都会重新分配 RFCOMM 通道号，而 macOS 的 SDP 缓存
+    /// 可能还停在上一次的值：拿着过期通道号 `openRFCOMMChannelSync` 仍会返回成功
+    /// （RFCOMM 层面握手完成），但手机端根本没 accept。用「打开后手机必须立刻下发
+    /// CONFIG/NET_INFO」这一点来校验通道号是否真的对了。
+    private var sawInboundFrame = false
+    /// 下一次查询通道号时跳过缓存、强制刷新 SDP
+    private var forceSdpRefresh = false
+    /// 本次重连已经为过期通道号刷新过一次
+    private var refreshedForStaleChannel = false
+    /// 需要在下次连接前断开 ACL：macOS 的 SDP 缓存在 ACL 存续期间刷新无效
+    private var needAclReset = false
+    /// 通道校验定时器
+    private var verifyTimer: Timer?
+
+    /// 手机下发的设备策略：断开后是否锁屏。
+    /// 默认开启；缓存到本地是因为真正需要锁屏时链路已经断了，问不到手机。
+    private(set) var lockOnDisconnect: Bool = {
+        let key = "bluedesk.relay.lockOnDisconnect"
+        return UserDefaults.standard.object(forKey: key) as? Bool ?? true
+    }()
 
     private var channel: IOBluetoothRFCOMMChannel?
     /// 整条会话走 TCP 的兜底通道（手填 Wi-Fi 或没有蓝牙时用；与 channel 互斥）
@@ -262,19 +287,20 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
         let sdpUUID = IOBluetoothSDPUUID(
             bytes: withUnsafeBytes(of: Protocol.serviceUUID.uuid) { Array($0) }, length: 16)
 
-        // 1) 缓存命中
-        if let record = device.getServiceRecord(for: sdpUUID) {
+        // 1) 缓存命中（除非上一次校验发现通道号已过期）
+        if !forceSdpRefresh, let record = device.getServiceRecord(for: sdpUUID) {
             var channelID: BluetoothRFCOMMChannelID = 0
             guard record.getRFCOMMChannelID(&channelID) == kIOReturnSuccess else { return nil }
             return channelID
         }
 
-        // 2) 缓存 miss → 强制刷新 SDP 再查（阻塞调用，但调用方已在后台线程或菜单手动入口）
-        NSLog("[PhoneLink] SDP 缓存 miss，刷新 \(device.name ?? "?") 的服务记录…")
+        // 2) 缓存 miss / 已判定过期 → 强制刷新 SDP 再查（阻塞调用，但调用方已在后台线程或菜单手动入口）
+        NSLog("[PhoneLink] 刷新 \(device.name ?? "?") 的 SDP 服务记录…")
         _ = device.performSDPQuery(nil)
 
         // performSDPQuery 是异步的，等一下让结果落地
         Thread.sleep(forTimeInterval: 2)
+        forceSdpRefresh = false
 
         guard let record = device.getServiceRecord(for: sdpUUID) else { return nil }
         var channelID: BluetoothRFCOMMChannelID = 0
@@ -309,6 +335,14 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
 
         let attempt = connectAttempt
         DispatchQueue.global(qos: .userInitiated).async {
+            // 上一次打开的是过期通道号：先把 ACL 断开，否则 performSDPQuery 只会
+            // 把同一份旧缓存再读一遍（实测刷新后仍是旧通道号）
+            if self.needAclReset {
+                self.needAclReset = false
+                NSLog("[PhoneLink] 断开 ACL 以重建 SDP 缓存…")
+                _ = phone.closeConnection()
+                Thread.sleep(forTimeInterval: 2)
+            }
             // SDP 查询（可能触发 performSDPQuery + Thread.sleep，在后台执行）
             guard let channelID = self.relayChannelID(of: phone) else {
                 DispatchQueue.main.async {
@@ -348,6 +382,7 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
                                                      secure: ScriptInjector.isTrusted,
                                                      input: true, text: true))
                     NSLog("[PhoneLink] 已连接 \(self.phoneName)（RFCOMM 通道 \(channelID)，MTU \(self.mtu)，第 \(attempt) 次尝试）")
+                    self.startChannelVerify(opened, channelID: channelID, device: phone)
                     return
                 }
 
@@ -374,6 +409,46 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
         }
     }
 
+    /// 校验刚打开的通道是不是真的连到了手机的中转服务。
+    ///
+    /// 手机 accept 后会立刻下发 CONFIG + NET_INFO；3 秒内一帧都没收到，
+    /// 说明用的是 SDP 缓存里的过期通道号（macOS 在这种情况仍会返回打开成功）。
+    private func startChannelVerify(_ opened: IOBluetoothRFCOMMChannel,
+                                    channelID: BluetoothRFCOMMChannelID,
+                                    device: IOBluetoothDevice) {
+        verifyTimer?.invalidate()
+        sawInboundFrame = false
+        verifyTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in
+            guard let self, self.channel === opened, self.isConnected, !self.sawInboundFrame else {
+                return
+            }
+            NSLog("[PhoneLink] 通道 \(channelID) 已打开但手机无响应，判定 SDP 通道号过期")
+            // 先拆掉本地通道（不报「已断开」），再强刷 SDP 重连
+            self.stopWriter()
+            opened.setDelegate(nil)
+            opened.close()
+            self.channel = nil
+            self.phoneDevice = nil
+            self.isConnected = false
+            self.connectedAddress = nil
+            self.netInfoReceived = false
+            self.onStateChange?(false, self.phoneName)
+
+            guard !self.refreshedForStaleChannel else {
+                self.refreshedForStaleChannel = false
+                self.pendingDevice = nil
+                self.onError?(L10n.t("error.connectFailed", device.name ?? device.addressString ?? ""))
+                return
+            }
+            self.refreshedForStaleChannel = true
+            self.forceSdpRefresh = true
+            self.needAclReset = true
+            self.connectAttempt = 0          // 刷新后给一次完整重试机会
+            self.pendingDevice = device
+            self.attemptOpenRelay()
+        }
+    }
+
     /// 按地址查找已配对设备（菜单点击后还原目标）
     func pairedDevice(at address: String) -> IOBluetoothDevice? {
         (IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice])?
@@ -387,6 +462,10 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     private func disconnect(silent: Bool) {
         pendingDevice = nil
         connectAttempt = 0
+        verifyTimer?.invalidate()
+        verifyTimer = nil
+        refreshedForStaleChannel = false
+        forceSdpRefresh = false
         closeDataLink()
         closeInputLink()
         guard isConnected else {
@@ -497,6 +576,7 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
             DispatchQueue.main.async {
                 guard self.isConnected, self.tcp === conn else { return }
                 NSLog("[PhoneLink] Wi-Fi 通道关闭")
+                self.onControlLinkLost?()
                 self.disconnect()
             }
         }
@@ -1127,6 +1207,7 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     func rfcommChannelData(_ rfcommChannel: IOBluetoothRFCOMMChannel!,
                            data dataPointer: UnsafeMutableRawPointer!,
                            length dataLength: Int) {
+        sawInboundFrame = true
         let incoming = Data(bytes: dataPointer, count: dataLength)
         let frames = parser.feed(incoming)
         for frame in frames {
@@ -1137,6 +1218,8 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     func rfcommChannelClosed(_ rfcommChannel: IOBluetoothRFCOMMChannel!) {
         NSLog("[PhoneLink] 通道关闭")
         if isConnected {
+            // 主动断开时先 setDelegate(nil)，走不到这里；能到就是手机端掉线
+            onControlLinkLost?()
             disconnect()
         }
     }
@@ -1188,6 +1271,14 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
                let text = obj["text"] as? String, !text.isEmpty {
                 onClipboard?(text)
             }
+
+        // 设备策略：缓存到本地，蓝牙断开时据此决定是否锁屏
+        case Protocol.FrameType.devicePolicy:
+            guard let obj = try? JSONSerialization.jsonObject(with: frame.payload) as? [String: Any],
+                  let lock = obj["lockOnDisconnect"] as? Bool else { return }
+            lockOnDisconnect = lock
+            UserDefaults.standard.set(lock, forKey: "bluedesk.relay.lockOnDisconnect")
+            NSLog("[PhoneLink] 设备策略：断开后锁屏 = \(lock)")
 
         // 手机下发的脚本步骤：本机用 CGEvent 注入，执行完回 ACK
         case Protocol.FrameType.scriptStep:

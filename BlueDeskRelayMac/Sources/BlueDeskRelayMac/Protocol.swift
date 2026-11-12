@@ -60,6 +60,10 @@ enum Protocol {
 
         /// 剪贴板同步（双向）：{"text":"…","at":…}
         static let clipboard: UInt8 = 0x17
+
+        /// 设备策略（手机 → PC）：{"lockOnDisconnect":true}
+        /// 缓存在本地，控制链路断开时据此决定是否锁屏
+        static let devicePolicy: UInt8 = 0x18
     }
 
     static let flagNeedAck: UInt8 = 0x01

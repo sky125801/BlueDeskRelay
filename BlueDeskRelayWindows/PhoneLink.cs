@@ -129,6 +129,15 @@ public sealed class PhoneLink : IDisposable
     /// <summary>连接状态变化</summary>
     public event Action<bool, string>? ConnectionChanged;
 
+    /// <summary>
+    /// 控制链路意外断开（手机离开范围 / 蓝牙掉线）。
+    /// 主动断开、切换通道、退出程序都不会触发。
+    /// </summary>
+    public event Action? ControlLinkLost;
+
+    /// <summary>手机下发的设备策略：断开后是否锁屏（默认开启，缓存到本地）</summary>
+    public bool LockOnDisconnect { get; private set; } = RelaySettings.LoadLockOnDisconnect();
+
     /// <summary>收到 NET_INFO 并记住了新的 TCP 数据通道端点（控制链路用于唤醒数据链路）</summary>
     public event Action? NetworkEndpointUpdated;
 
@@ -576,7 +585,10 @@ public sealed class PhoneLink : IDisposable
             }
             finally
             {
+                // 读循环自己结束 = 手机掉线（主动断开时 IsConnected 已先置 false）
+                var lost = IsConnected && _role == PhoneLinkRole.Control;
                 Disconnect();
+                if (lost) ControlLinkLost?.Invoke();
             }
         }, token);
     }
@@ -648,6 +660,29 @@ public sealed class PhoneLink : IDisposable
                 catch (Exception ex)
                 {
                     RelayLog.Write($"剪贴板同步解析失败：{ex.Message}");
+                }
+                break;
+            }
+
+            // 设备策略：缓存到本地，蓝牙控制链路断开时据此决定是否锁屏
+            case Protocol.FrameType.DevicePolicy:
+            {
+                try
+                {
+                    var obj = System.Text.Json.JsonDocument.Parse(Encoding.UTF8.GetString(frame.Payload)).RootElement;
+                    if (obj.TryGetProperty("lockOnDisconnect", out var lk) &&
+                        (lk.ValueKind == System.Text.Json.JsonValueKind.True ||
+                         lk.ValueKind == System.Text.Json.JsonValueKind.False))
+                    {
+                        var on = lk.ValueKind == System.Text.Json.JsonValueKind.True;
+                        LockOnDisconnect = on;
+                        RelaySettings.SaveLockOnDisconnect(on);
+                        RelayLog.Write($"设备策略：断开后锁屏 = {on}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    RelayLog.Write($"设备策略解析失败：{ex.Message}");
                 }
                 break;
             }

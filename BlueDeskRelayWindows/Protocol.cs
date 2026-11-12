@@ -81,6 +81,9 @@ public static class Protocol
 
         /// <summary>剪贴板同步（双向）：{"text":"…","at":…}</summary>
         public const byte Clipboard = 0x17;
+
+        /// <summary>设备策略（手机 → PC）：{"lockOnDisconnect":true}，缓存后用于断链锁屏</summary>
+        public const byte DevicePolicy = 0x18;
     }
 
     public const byte FlagNeedAck = 0x01;

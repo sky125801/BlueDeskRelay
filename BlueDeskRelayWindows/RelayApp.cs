@@ -149,6 +149,14 @@ public sealed class RelayApp : Form
             }
         });
 
+        // 手机掉线 → 按手机端配置锁屏；退出程序与菜单主动断开的不会走到这里
+        _link.ControlLinkLost += () => Post(() =>
+        {
+            if (_quitting || !_link.LockOnDisconnect) return;
+            RelayLog.Write("手机链路断开，锁定工作站");
+            LockWorkStation();
+        });
+
         _link.TextReceived += text => Post(() =>
         {
             if (TrySetClipboard(text))
@@ -883,6 +891,10 @@ public sealed class RelayApp : Form
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
+
+    /// <summary>锁定工作站（等同 Win+L）</summary>
+    [DllImport("user32.dll")]
+    private static extern bool LockWorkStation();
 }
 
 /// <summary>

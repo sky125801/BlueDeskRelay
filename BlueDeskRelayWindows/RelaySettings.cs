@@ -33,6 +33,8 @@ internal static class RelaySettings
         public int WifiChunk { get; set; } = DefaultTcpChunk;
         /// <summary>本机稳定标识：TCP 接入时手机拿不到 MAC，靠它把会话认回同一台电脑</summary>
         public string? PeerId { get; set; }
+        /// <summary>手机下发的设备策略：断开后是否锁屏（默认开启）</summary>
+        public bool LockOnDisconnect { get; set; } = true;
     }
 
     private static readonly object Gate = new();
@@ -172,6 +174,20 @@ internal static class RelaySettings
             var model = Current();
             if (model.WifiChunk == chunk) return;
             model.WifiChunk = chunk;
+            Persist();
+        }
+    }
+
+    /// <summary>手机下发的设备策略：控制链路断开后是否锁屏（未下发时默认开启）</summary>
+    public static bool LoadLockOnDisconnect() => Current().LockOnDisconnect;
+
+    public static void SaveLockOnDisconnect(bool on)
+    {
+        lock (Gate)
+        {
+            var model = Current();
+            if (model.LockOnDisconnect == on) return;
+            model.LockOnDisconnect = on;
             Persist();
         }
     }
