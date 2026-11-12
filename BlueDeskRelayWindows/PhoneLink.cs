@@ -18,6 +18,9 @@ public enum PhoneLinkRole
 {
     Control,
     Data,
+
+    /// <summary>实时键鼠输入车道：独立 TCP 连接，避免被文件块队头阻塞</summary>
+    Input,
 }
 
 /// <summary>
@@ -38,6 +41,15 @@ public enum PhoneLinkRole
 /// </summary>
 public sealed class PhoneLink : IDisposable
 {
+    /// <summary>上次回 INPUT_STATE 的时间（毫秒级节流，避免每批都回包）</summary>
+    private long _lastInputStateAt;
+
+    /// <summary>输入车道心跳；手机靠它判断链路是否还活着（空闲 1.5s 就会回落 HID）</summary>
+    private CancellationTokenSource? _inputHeartbeat;
+
+    /// <summary>最近一批实时输入的序号，心跳里原样带回</summary>
+    private long _lastAppliedSeq;
+
     /// <summary>直连缓存地址的超时（秒）——地址失效时要快速失败，好回退到设备发现</summary>
     private const int CachedConnectTimeoutSeconds = 6;
 
@@ -408,6 +420,7 @@ public sealed class PhoneLink : IDisposable
         IRelayTransport transport, string name, string? btAddress, CancellationToken ct)
     {
         var isData = _role == PhoneLinkRole.Data;
+        var isInput = _role == PhoneLinkRole.Input;
         lock (_gate)
         {
             _transport = transport;
@@ -425,7 +438,11 @@ public sealed class PhoneLink : IDisposable
             await SendAsync(Protocol.Hello(Environment.MachineName), ct);
             // 走 TCP 时手机拿不到蓝牙 MAC，补一个 IDENT 让它把会话认回这台电脑；
             // 数据链路额外带 role=data，手机只把它挂到控制会话上，不会断蓝牙。
-            await SendAsync(Protocol.Ident(BuildIdent(transport.IsWifi, isData)), ct);
+            await SendAsync(Protocol.Ident(BuildIdent(transport.IsWifi, isData, isInput)), ct);
+            // 数据链路不承担脚本；控制链路上额外宣告「本机可代跑脚本步骤 + 可接收实时输入」，
+            // 手机据此把执行方式从 HID 上报切到本地注入，并建立 role=input 的输入车道。
+            if (!isData && !isInput)
+                await SendAsync(Protocol.AgentInfo(1, "win", true, false, input: 1, text: 1), ct);
         }
         catch (Exception ex)
         {
@@ -434,14 +451,45 @@ public sealed class PhoneLink : IDisposable
             return false;
         }
 
-        // 数据链路不算「手机连接状态」，状态与托盘只反映蓝牙控制链路
-        if (!isData) ConnectionChanged?.Invoke(true, name);
+        // 数据链路与输入车道不算「手机连接状态」，状态与托盘只反映蓝牙控制链路
+        if (!isData && !isInput) ConnectionChanged?.Invoke(true, name);
         StartReadLoop();
+        if (isInput) StartInputHeartbeat();
         return true;
     }
 
+    /// <summary>
+    /// 输入车道心跳：每 500ms 回一次 INPUT_STATE。
+    ///
+    /// 手机侧以「1.5 秒内收到回执」判定 Wi-Fi 可用；若只在收到输入时才回包，
+    /// 用户静止 1.5 秒后再操作就会被误判为链路失效而回落 HID。
+    /// </summary>
+    private void StartInputHeartbeat()
+    {
+        try { _inputHeartbeat?.Cancel(); } catch { }
+        var cts = new CancellationTokenSource();
+        _inputHeartbeat = cts;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (!cts.IsCancellationRequested && IsConnected)
+                {
+                    var seq = Interlocked.Read(ref _lastAppliedSeq);
+                    await SendAsync(Protocol.InputState(seq, 0, true), cts.Token);
+                    await Task.Delay(500, cts.Token);
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[PhoneLink] 输入心跳结束：{ex.Message}");
+            }
+        }, cts.Token);
+    }
+
     /// <summary>IDENT 载荷：优先让手机用蓝牙 MAC 当会话键，保持历史转发组不失配</summary>
-    private static string BuildIdent(bool wifi, bool dataRole)
+    private static string BuildIdent(bool wifi, bool dataRole, bool inputRole = false)
     {
         var payload = new Dictionary<string, object?>
         {
@@ -450,8 +498,9 @@ public sealed class PhoneLink : IDisposable
             ["platform"] = "win",
             ["transport"] = wifi ? "tcp" : "bt",
         };
-        // 只有独立数据链路才带 role；兜底整条 TCP 会话必须保持旧行为
+        // 只有独立数据链路/输入车道才带 role；兜底整条 TCP 会话必须保持旧行为
         if (dataRole) payload["role"] = "data";
+        else if (inputRole) payload["role"] = "input";
         return System.Text.Json.JsonSerializer.Serialize(payload);
     }
 
@@ -737,6 +786,90 @@ public sealed class PhoneLink : IDisposable
             case Protocol.FrameType.Ping:
                 await SendAsync(Protocol.Pong(), ct);
                 break;
+
+            // 手机下发的脚本步骤：本机用 SendInput 注入，执行完回 ACK
+            case Protocol.FrameType.ScriptStep:
+            {
+                var stepId = "";
+                var ok = false;
+                string? err = null;
+                try
+                {
+                    using var doc = System.Text.Json.JsonDocument
+                        .Parse(Encoding.UTF8.GetString(frame.Payload));
+                    var root = doc.RootElement;
+                    stepId = root.TryGetProperty("id", out var i) ? i.GetString() ?? "" : "";
+                    ScriptRunner.Execute(root);
+                    ok = true;
+                }
+                catch (Exception ex)
+                {
+                    err = ex.Message;
+                    RelayLog.Write($"脚本步骤执行失败：{ex.Message}");
+                }
+                await SendAsync(Protocol.ScriptStepAck(stepId, ok, err), ct);
+                break;
+            }
+
+            // 手机发起录制：开始/结束都由它控制，结束时把整份脚本一起回传
+            case Protocol.FrameType.RecordCtrl:
+            {
+                var on = false;
+                try
+                {
+                    using var doc = System.Text.Json.JsonDocument
+                        .Parse(Encoding.UTF8.GetString(frame.Payload));
+                    on = doc.RootElement.TryGetProperty("on", out var v) &&
+                         v.ValueKind == System.Text.Json.JsonValueKind.True;
+                }
+                catch (Exception ex)
+                {
+                    RelayLog.Write($"录制指令解析失败：{ex.Message}");
+                }
+
+                if (on)
+                {
+                    var started = ScriptRecorder.Start();
+                    RelayLog.Write(started ? "开始录制脚本" : "录制启动失败（钩子安装被拒绝）");
+                    await SendAsync(Protocol.RecordResult(
+                        ok: started,
+                        recording: started,
+                        err: started ? null : "无法安装键盘钩子（可能被安全软件拦截）"), ct);
+                }
+                else
+                {
+                    var result = ScriptRecorder.Stop();
+                    if (result == null)
+                    {
+                        await SendAsync(Protocol.RecordResult(
+                            ok: false, recording: false, err: "没有录到任何操作"), ct);
+                    }
+                    else
+                    {
+                        RelayLog.Write($"录制完成：{result.Steps} 步，已保存 {result.FilePath}");
+                        await SendAsync(Protocol.RecordResult(
+                            ok: true,
+                            recording: false,
+                            name: result.Name,
+                            scriptJson: result.ScriptJson), ct);
+                    }
+                }
+                break;
+            }
+
+            // 实时键鼠输入：直接注入，不逐条 ACK；每 100ms 回一次已应用序号
+            case Protocol.FrameType.LiveInput:
+            {
+                var (applied, ok) = ScriptRunner.ApplyLive(Encoding.UTF8.GetString(frame.Payload));
+                Interlocked.Exchange(ref _lastAppliedSeq, applied);
+                var now = Environment.TickCount64;
+                if (!ok || now - _lastInputStateAt >= 100)
+                {
+                    _lastInputStateAt = now;
+                    await SendAsync(Protocol.InputState(applied, 0, ok), ct);
+                }
+                break;
+            }
 
             case Protocol.FrameType.Error:
                 Debug.WriteLine($"[PhoneLink] 手机端错误：{Encoding.UTF8.GetString(frame.Payload)}");
@@ -1175,6 +1308,10 @@ public sealed class PhoneLink : IDisposable
             try { _readCts?.Cancel(); } catch { }
             try { _readCts?.Dispose(); } catch { }
             _readCts = null;
+
+            try { _inputHeartbeat?.Cancel(); } catch { }
+            try { _inputHeartbeat?.Dispose(); } catch { }
+            _inputHeartbeat = null;
 
             try { transport?.Dispose(); } catch { }
         }

@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Carbon.HIToolbox
 import UserNotifications
 
@@ -35,6 +36,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+
+        // 没有「辅助功能」授权时 CGEvent 注入会被系统静默丢弃：手机端的 Wi-Fi 输入
+        // 车道会收到 ok=0 并主动回落 HID（表现就是「明明同局域网却一直走蓝牙」）。
+        // 启动时主动拉起系统授权面板，让用户一步到位；已授权时不会打扰。
+        if !ScriptInjector.isTrusted {
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
+            AXIsProcessTrustedWithOptions(options as CFDictionary)
+            NSLog("[BlueDesk Relay] 未获辅助功能授权，已请求系统对话框")
+        }
 
         // 通知授权（收发提示用；denied 不影响功能本体）
         UNUserNotificationCenter.current()

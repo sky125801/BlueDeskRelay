@@ -47,6 +47,34 @@ public static class Protocol
         /// 不带 role 表示旧版「整条会话切 TCP」。
         /// </summary>
         public const byte Ident = 0x0E;
+
+        /// <summary>代理能力宣告（PC → 手机）：{"script":1,"platform":"win","unicode":1,"secure":0|1}</summary>
+        public const byte AgentInfo = 0x0F;
+
+        /// <summary>
+        /// 脚本步骤（手机 → PC）：{"id","t","x","y","abs","w","k","txt"}。
+        /// 坐标是 1280×720 逻辑坐标，由本机换算成屏幕绝对坐标；文本走 Unicode 注入。
+        /// </summary>
+        public const byte ScriptStep = 0x10;
+
+        /// <summary>脚本步骤结果（PC → 手机）：{"id","ok","err"}</summary>
+        public const byte ScriptStepAck = 0x11;
+
+        /// <summary>录制控制（手机 → PC）：{"on":true|false}</summary>
+        public const byte RecordCtrl = 0x12;
+
+        /// <summary>录制结果（PC → 手机）：{"ok","recording","name","script","err"}</summary>
+        public const byte RecordResult = 0x13;
+
+        /// <summary>
+        /// 实时键鼠输入（手机 → PC，独立输入车道）：
+        /// {"seq":1024,"ev":[{"t":"move","dx":3,"dy":-2},{"t":"down","b":1},{"t":"up","b":1},
+        /// {"t":"wheel","d":2},{"t":"key","k":"CTRL+A"},{"t":"text","s":"中文"}]}
+        /// </summary>
+        public const byte LiveInput = 0x14;
+
+        /// <summary>输入链路状态（PC → 手机，约 100ms 一次）：{"appliedSeq":1022,"rtt":0,"ok":1}</summary>
+        public const byte InputState = 0x15;
     }
 
     public const byte FlagNeedAck = 0x01;
@@ -196,4 +224,53 @@ public static class Protocol
     /// <summary>IDENT：PC 补报稳定标识（走 TCP 时用于把会话还原成同一台 PC）</summary>
     public static Frame Ident(string json) =>
         new(FrameType.Ident, Encoding.UTF8.GetBytes(json), false);
+
+    /// <summary>AGENT_INFO：告诉手机本机可以代跑脚本步骤（本地注入）</summary>
+    public static Frame AgentInfo(int script, string platform, bool unicode, bool secure,
+        int input = 0, int text = 0) =>
+        new(FrameType.AgentInfo,
+            JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                script,
+                platform,
+                unicode = unicode ? 1 : 0,
+                secure = secure ? 1 : 0,
+                input,
+                text,
+            }), false);
+
+    /// <summary>INPUT_STATE：输入车道回执（已应用序号 + 注入是否成功）</summary>
+    public static Frame InputState(long appliedSeq, int rtt, bool ok) =>
+        new(FrameType.InputState,
+            JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                appliedSeq,
+                rtt,
+                ok = ok ? 1 : 0,
+            }), false);
+
+    /// <summary>SCRIPT_STEP_ACK：单个脚本步骤的执行结果</summary>
+    public static Frame ScriptStepAck(string id, bool ok, string? err = null) =>
+        new(FrameType.ScriptStepAck,
+            JsonSerializer.SerializeToUtf8Bytes(new { id, ok, err }), false);
+
+    /// <summary>
+    /// RECORD_RESULT：录制状态 / 结果。
+    /// 结束时 scriptJson 是整份脚本（嵌套对象，不是字符串），手机会直接解析导入。
+    /// </summary>
+    public static Frame RecordResult(bool ok, bool recording, string? name = null,
+        string? scriptJson = null, string? err = null)
+    {
+        var node = new System.Text.Json.Nodes.JsonObject
+        {
+            ["ok"] = ok,
+            ["recording"] = recording,
+        };
+        if (!string.IsNullOrEmpty(name)) node["name"] = name;
+        if (!string.IsNullOrEmpty(err)) node["err"] = err;
+        if (!string.IsNullOrEmpty(scriptJson))
+            node["script"] = System.Text.Json.Nodes.JsonNode.Parse(scriptJson);
+
+        return new Frame(FrameType.RecordResult, Encoding.UTF8.GetBytes(node.ToJsonString()), false);
+    }
 }

@@ -38,6 +38,22 @@ enum Protocol {
         static let netInfo: UInt8 = 0x0D
         /// 身份补充（PC → 手机）：{"id":"uuid","bt":"AA:BB:..","platform":"mac","transport":"tcp"}
         static let ident: UInt8 = 0x0E
+        /// 代理能力宣告（PC → 手机）：{"script":1,"platform":"mac","unicode":1,"secure":0|1}
+        static let agentInfo: UInt8 = 0x0F
+        /// 脚本步骤（手机 → PC）：{"id","t","x","y","abs","w","k","txt"}
+        static let scriptStep: UInt8 = 0x10
+        /// 脚本步骤结果（PC → 手机）：{"id","ok","err"}
+        static let scriptStepAck: UInt8 = 0x11
+        /// 录制控制（手机 → PC）：{"on":true|false}
+        static let recordCtrl: UInt8 = 0x12
+        /// 录制结果（PC → 手机）：{"ok","recording","name","script","err"}
+        static let recordResult: UInt8 = 0x13
+
+        /// 实时键鼠输入（手机 → PC，独立输入车道）
+        static let liveInput: UInt8 = 0x14
+
+        /// 输入链路状态（PC → 手机，约 100ms 一次）
+        static let inputState: UInt8 = 0x15
     }
 
     static let flagNeedAck: UInt8 = 0x01
@@ -117,6 +133,41 @@ enum Protocol {
     /// IDENT（PC 补报稳定标识，走 TCP 时用于把会话还原成同一台 PC）
     static func ident(_ json: String) -> Frame {
         Frame(type: FrameType.ident, payload: Data(json.utf8))
+    }
+
+    /// AGENT_INFO：告诉手机本机可代跑脚本步骤（CGEvent 本地注入）
+    /// input/text 用于宣告实时输入车道与 Unicode 文本直送能力
+    static func agentInfo(script: Bool, platform: String, unicode: Bool, secure: Bool,
+                          input: Bool = false, text: Bool = false) -> Frame {
+        let json = "{\"script\":\(script ? 1 : 0),\"platform\":\"\(jsonEscaped(platform))\"," +
+            "\"unicode\":\(unicode ? 1 : 0),\"secure\":\(secure ? 1 : 0)," +
+            "\"input\":\(input ? 1 : 0),\"text\":\(text ? 1 : 0)}"
+        return Frame(type: FrameType.agentInfo, payload: Data(json.utf8))
+    }
+
+    /// INPUT_STATE：输入车道回执（已应用序号 + 注入是否成功）
+    static func inputState(appliedSeq: Int64, ok: Bool) -> Frame {
+        let json = "{\"appliedSeq\":\(appliedSeq),\"rtt\":0,\"ok\":\(ok ? 1 : 0)}"
+        return Frame(type: FrameType.inputState, payload: Data(json.utf8))
+    }
+
+    /// SCRIPT_STEP_ACK：单个脚本步骤的执行结果
+    static func scriptStepAck(id: String, ok: Bool, err: String?) -> Frame {
+        let errPart = err.map { "\"\(jsonEscaped($0))\"" } ?? "null"
+        let json = "{\"id\":\"\(jsonEscaped(id))\",\"ok\":\(ok ? "true" : "false"),\"err\":\(errPart)}"
+        return Frame(type: FrameType.scriptStepAck, payload: Data(json.utf8))
+    }
+
+    /// RECORD_RESULT：录制状态 / 结果；结束时 scriptJson 是整份脚本对象
+    static func recordResult(ok: Bool, recording: Bool,
+                             name: String? = nil, scriptJson: String? = nil,
+                             err: String? = nil) -> Frame {
+        var json = "{\"ok\":\(ok ? "true" : "false"),\"recording\":\(recording ? "true" : "false")"
+        if let name { json += ",\"name\":\"\(jsonEscaped(name))\"" }
+        if let err { json += ",\"err\":\"\(jsonEscaped(err))\"" }
+        if let scriptJson { json += ",\"script\":\(scriptJson)" }
+        json += "}"
+        return Frame(type: FrameType.recordResult, payload: Data(json.utf8))
     }
 
     // MARK: - 解析（流式喂入，产出完整帧）
@@ -212,6 +263,9 @@ enum Protocol {
     private static func jsonEscaped(_ s: String) -> String {
         s.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .replacingOccurrences(of: "\t", with: "\\t")
     }
 }
 

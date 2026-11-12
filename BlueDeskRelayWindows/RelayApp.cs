@@ -26,6 +26,7 @@ public sealed class RelayApp : Form
 
     private readonly PhoneLink _link = new();
     private readonly PhoneLink _dataLink = new(PhoneLinkRole.Data);
+    private readonly PhoneLink _inputLink = new(PhoneLinkRole.Input);
     private readonly NotifyIcon _tray;
     private readonly ToolStripMenuItem _statusItem;
     private readonly ToolStripMenuItem _connectItem;
@@ -104,8 +105,12 @@ public sealed class RelayApp : Form
 
         _link.ConnectionChanged += (connected, name) => Post(() =>
         {
-            // 蓝牙控制链路断开时，数据链路也一并关闭（重连后手机会重新下发端点）
-            if (!connected) _dataLink.Disconnect();
+            // 蓝牙控制链路断开时，数据链路与输入车道也一并关闭（重连后手机会重新下发端点）
+            if (!connected)
+            {
+                _dataLink.Disconnect();
+                _inputLink.Disconnect();
+            }
 
             RelayLog.Write(connected ? Strings.Format(Strings.ConnectedFormat, name) : Strings.Format(Strings.DisconnectedFormat, name));
             // 连接后把当前通道也标出来：蓝牙还是 Wi-Fi，一眼能看出有没有走快通道
@@ -160,8 +165,12 @@ public sealed class RelayApp : Form
         _link.FolderReceived += OnFolderReceived;
         _dataLink.FolderReceived += OnFolderReceived;
 
-        // NET_INFO 到达后立刻唤醒数据链路，不用干等重试间隔
-        _link.NetworkEndpointUpdated += () => _dataLink.RequestConnectNow();
+        // NET_INFO 到达后立刻唤醒数据链路与输入车道，不用干等重试间隔
+        _link.NetworkEndpointUpdated += () =>
+        {
+            _dataLink.RequestConnectNow();
+            _inputLink.RequestConnectNow();
+        };
 
         // 全局热键 Ctrl+Alt+B（剪贴板）；Ctrl+Alt+F（发送资源管理器里选中的文件）
         if (!RegisterHotKey(Handle, HotkeyId, ModControl | ModAlt, VkB))
@@ -180,6 +189,10 @@ public sealed class RelayApp : Form
 
         // 数据链路守护：只在蓝牙控制链路在线时连接（端点由手机 NET_INFO 下发）
         _ = Task.Run(() => _dataLink.SuperviseDataAsync(
+            () => _link.IsConnected && !_link.IsWifi, _lifeCts.Token));
+
+        // 输入车道守护：与数据链路同源，但独立 TCP 连接，避免文件块阻塞键鼠事件
+        _ = Task.Run(() => _inputLink.SuperviseDataAsync(
             () => _link.IsConnected && !_link.IsWifi, _lifeCts.Token));
 
         // 预取已配对设备，保证「连接设备」菜单展开即有内容
@@ -579,6 +592,7 @@ public sealed class RelayApp : Form
         try { _lifeCts.Cancel(); } catch { }
         _link.Dispose();
         _dataLink.Dispose();
+        _inputLink.Dispose();
         _tray.Visible = false;
         _tray.Dispose();
         Application.Exit();
@@ -594,6 +608,7 @@ public sealed class RelayApp : Form
             try { _lifeCts.Cancel(); } catch { }
             _link.Dispose();
             _dataLink.Dispose();
+            _inputLink.Dispose();
             _tray.Visible = false;
             _tray.Dispose();
         }

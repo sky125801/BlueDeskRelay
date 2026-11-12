@@ -87,7 +87,8 @@ Swift + SwiftPM 菜单栏程序（`LSUIElement`），基于 IOBluetooth 的经�
 - **服务 UUID**：`a3bd7f2e-5c14-4a9e-9d1b-2f6e8c04bde1`
 - **帧格式**：11 字节头（MAGIC / 版本 / 类型 / FLAGS / 长度 / CRC32 低 16 位）+ 载荷
 - **帧类型**：`HELLO`、`TEXT`、`FILE_META`、`FILE_CHUNK`、`FILE_END`、`ACK`、`PING`、`PONG`、
-  `ERROR`、`CONFIG`、`BATCH_META`、`BATCH_END`、`NET_INFO`、`IDENT`
+  `ERROR`、`CONFIG`、`BATCH_META`、`BATCH_END`、`NET_INFO`、`IDENT`、
+  `AGENT_INFO`、`SCRIPT_STEP`、`SCRIPT_STEP_ACK`、`RECORD_CTRL`、`RECORD_RESULT`
 - **分块**：蓝牙 4 KB（受 RFCOMM MTU 限制），Wi-Fi 64 KB（由 `NET_INFO` 的 `chunk` 字段下发）
 - **传输上限**：默认 64 MB，由手机通过 `CONFIG` 帧统一下发（0 表示不限）
 - **性能**：SPP 通道实测约 50~200 KB/s；Wi-Fi 通道受限于局域网，实测可达数十 MB/s
@@ -112,6 +113,41 @@ Wi-Fi 端点完全由手机通过 `NET_INFO` 自动下发，PC 端不提供手�
 
 > 旧版本 PC 端不认识 `NET_INFO`，会直接忽略并继续走蓝牙；手机端对没有 `IDENT` 的会话
 > 沿用原来的 MAC 作键。两个方向都向后兼容，可以分批升级。
+
+### 脚本代理通道
+
+装了配套应用的 PC 可以代替手机执行自动化脚本，手机不再逐条上报 HID 报告：
+
+1. PC 在 `HELLO` / `IDENT` 之后发 `AGENT_INFO`：`{"script":1,"platform":"win","unicode":1,"secure":0|1}`。
+2. 手机收到后把该设备标记为「可代理」，执行引擎优先走这条通道；
+   未收到的设备仍按原来的 HID 通道执行，脚本本身不需要改动。
+3. 每执行一步，手机发 `SCRIPT_STEP`：
+   `{"id":"uuid","t":"click","x":640,"y":360,"abs":true,"w":5,"k":"CTRL+A","txt":"…"}`。
+4. PC 用 `SendInput`（macOS 为 `CGEvent`）本地注入，回 `SCRIPT_STEP_ACK`：
+   `{"id":"uuid","ok":true,"err":null}`。
+5. 手机等待 ACK 超时（3 秒）或断线即判该步失败，交给既有的重试 / 用户裁决流程，
+   **不会**再补一次 HID，避免同一步执行两次。
+
+坐标沿用脚本的 1280×720 逻辑坐标，由 PC 按屏幕比例换算；文本走 Unicode 注入，
+中文、emoji、任意输入法内容都能输入。macOS 需要「辅助功能」授权，未授权时
+`AGENT_INFO.secure` 为 0，步骤会返回明确的错误信息。
+
+### 在电脑上录制脚本
+
+不需要在 PC 上找任何菜单入口，全部由手机发起：
+
+1. 手机脚本页 →「新建脚本」→「在电脑上录制」，选一台装有配套应用的 PC。
+2. 手机发 `RECORD_CTRL {"on":true}`；PC 装好全局键鼠钩子并回
+   `RECORD_RESULT {"ok":true,"recording":true}`。
+3. 用户在电脑上正常操作一遍；PC 只监听、不拦截（`WH_KEYBOARD_LL` / `WH_MOUSE_LL`，
+   macOS 为 `CGEventTap` listen-only），自身注入的事件会按水印跳过。
+4. 手机点「结束录制」→ `RECORD_CTRL {"on":false}`；PC 回
+   `RECORD_RESULT {"ok":true,"name":"录制 …","script":{…}}`，脚本随消息内联回传。
+5. 手机解析后直接写入脚本库并提示导入成功；PC 同时会在
+   `下载/BlueDesk/record-*.json` 留一份备份。
+
+脚本格式与手机完全一致：`move / click / rclick / dclick / wheel / key / combo`，
+坐标为 1280×720 逻辑坐标，`d` 为距上一步的毫秒间隔。
 
 ## 多语言
 

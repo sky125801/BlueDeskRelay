@@ -41,6 +41,16 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     /// 蓝牙控制链路之外的 TCP 数据链路：只收发文件帧，控制帧仍走蓝牙
     private var dataLink: DataLink?
     private var dataLinkConnecting = false
+
+    // 实时输入车道：独立 TCP 连接，避免文件块队头阻塞键鼠事件
+    private var inputLink: DataLink?
+    private var inputLinkConnecting = false
+    private var inputLinkRetryAt = Date.distantPast
+    private var lastInputStateAt = Date.distantPast
+    /// 输入车道心跳：手机以 1.5s 内是否收到回执判断链路健康
+    private var inputStateTimer: Timer?
+    /// 最近一批实时输入的序号，心跳原样带回
+    private var lastAppliedSeq: Int64 = 0
     /// 数据链路下次允许重试的时间（失败后 5 秒重试，只在蓝牙控制链路在线时）
     private var dataLinkRetryAt = Date.distantPast
     /// 本轮蓝牙会话是否已收到 NET_INFO（避免控制会话尚未在手机端注册就抢先连数据链路）
@@ -329,6 +339,10 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
                     self.onStateChange?(true, self.phoneName)
                     self.sendFrame(Protocol.hello(self.localName))
                     self.sendFrame(Protocol.ident(self.identJSON(wifi: false)))
+                    self.sendFrame(Protocol.agentInfo(script: true, platform: "mac",
+                                                     unicode: true,
+                                                     secure: ScriptInjector.isTrusted,
+                                                     input: true, text: true))
                     NSLog("[PhoneLink] 已连接 \(self.phoneName)（RFCOMM 通道 \(channelID)，MTU \(self.mtu)，第 \(attempt) 次尝试）")
                     return
                 }
@@ -370,6 +384,7 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
         pendingDevice = nil
         connectAttempt = 0
         closeDataLink()
+        closeInputLink()
         guard isConnected else {
             tcp?.close()
             tcp = nil
@@ -440,6 +455,7 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
             return
         }
         closeDataLink()
+        closeInputLink()
         tcp = conn
         isConnected = true
         connectedAddress = nil
@@ -455,6 +471,9 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
         onStateChange?(true, phoneName)
         sendFrame(Protocol.hello(localName))
         sendFrame(Protocol.ident(identJSON(wifi: true)))
+        sendFrame(Protocol.agentInfo(script: true, platform: "mac", unicode: true,
+                                     secure: ScriptInjector.isTrusted,
+                                     input: true, text: true))
         NSLog("[PhoneLink] 已连接 \(phoneName)（Wi-Fi \(host):\(port)，整条兜底模式）")
     }
 
@@ -506,6 +525,7 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
             wifiPort = 0
             let hadDataLink = dataLink != nil
             closeDataLink()
+            closeInputLink()
             if hadDataLink { onStateChange?(true, phoneName) }
             NSLog("[PhoneLink] 手机未提供 Wi-Fi 端点（可能没连 Wi-Fi），继续走蓝牙")
             return
@@ -521,6 +541,7 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
         wifiPort = port
         NSLog("[PhoneLink] 手机提供 Wi-Fi 端点 \(host):\(port)，尝试建立数据链路")
         ensureDataLink()
+        ensureInputLink()
     }
 
     /// 多网卡时优先内网地址（192.168 / 10 / 172.16-31），其余按原顺序兜底
@@ -585,6 +606,104 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
         }
     }
 
+    // MARK: - TCP 输入车道（实时键鼠）
+
+    /// 连接输入车道；与数据链路同源端点，但独立连接、独立读循环
+    private func ensureInputLink() {
+        assert(Thread.isMainThread)
+        guard isConnected, channel != nil, tcp == nil, netInfoReceived else { return }
+        guard inputLink == nil, !inputLinkConnecting else { return }
+        guard Date() >= inputLinkRetryAt else { return }
+        guard let host = wifiHost, wifiPort > 0 else { return }
+
+        inputLinkConnecting = true
+        let port = UInt16(truncatingIfNeeded: wifiPort)
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let conn = TcpConnection()
+            let ok = conn.connect(host: host, port: port, timeout: 4)
+            DispatchQueue.main.async {
+                guard let self else {
+                    conn.close()
+                    return
+                }
+                self.inputLinkConnecting = false
+                guard ok else {
+                    conn.close()
+                    self.inputLinkRetryAt = Date().addingTimeInterval(5)
+                    return
+                }
+                guard self.isConnected, self.channel != nil,
+                      self.netInfoReceived, self.inputLink == nil else {
+                    conn.close()
+                    return
+                }
+                self.adoptInputLink(DataLink(conn), host: host, port: Int(port))
+            }
+        }
+    }
+
+    /// 输入车道建好后报 HELLO + IDENT(role=input)，手机据此挂到控制会话上
+    private func adoptInputLink(_ link: DataLink, host: String, port: Int) {
+        guard link.write(Protocol.hello(localName)),
+              link.write(Protocol.ident(identJSON(wifi: true, role: "input"))) else {
+            link.close()
+            inputLinkRetryAt = Date().addingTimeInterval(5)
+            return
+        }
+        inputLink = link
+        inputLinkRetryAt = .distantPast
+        startInputLinkReader(link)
+        startInputHeartbeat()
+        NSLog("[PhoneLink] 输入车道已建立（\(host):\(port)）")
+    }
+
+    /// 每 500ms 回一次 INPUT_STATE：只在收到输入时回包的话，
+    /// 用户静止 1.5 秒后再操作会被手机误判为链路失效而回落 HID。
+    private func startInputHeartbeat() {
+        inputStateTimer?.invalidate()
+        inputStateTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            guard let self, let link = self.inputLink else { return }
+            let frame = Protocol.inputState(appliedSeq: self.lastAppliedSeq,
+                                            ok: ScriptInjector.isTrusted)
+            DispatchQueue.global(qos: .utility).async {
+                if !link.write(frame) {
+                    DispatchQueue.main.async { self.dropInputLink(link) }
+                }
+            }
+        }
+    }
+
+    private func startInputLinkReader(_ link: DataLink) {
+        let thread = Thread { [weak self, link] in
+            while true {
+                guard let data = link.conn.readSome(timeout: 1.0) else { break }
+                if data.isEmpty { continue }
+                let frames = link.parser.feed(data)
+                if frames.isEmpty { continue }
+                DispatchQueue.main.async {
+                    guard let self, self.inputLink === link else { return }
+                    for frame in frames { self.handleFrame(frame, from: .inputLink(link)) }
+                }
+            }
+            DispatchQueue.main.async {
+                guard let self, self.inputLink === link else { return }
+                self.dropInputLink(link)
+            }
+        }
+        thread.name = "BlueDeskRelay.inputlink"
+        thread.stackSize = 256 * 1024
+        thread.start()
+    }
+
+    private func dropInputLink(_ link: DataLink) {
+        guard inputLink === link else { return }
+        inputLink = nil
+        inputStateTimer?.invalidate()
+        inputStateTimer = nil
+        link.close()
+        inputLinkRetryAt = Date().addingTimeInterval(5)
+    }
+
     /// 数据链路建好后报 HELLO + IDENT(role=data)，手机据此把它挂到蓝牙控制会话上
     private func adoptDataLink(_ link: DataLink, host: String, port: Int) {
         guard link.write(Protocol.hello(localName)),
@@ -642,11 +761,24 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
         dataLinkRetryAt = .distantPast
     }
 
+    private func closeInputLink() {
+        inputStateTimer?.invalidate()
+        inputStateTimer = nil
+        guard let link = inputLink else {
+            inputLinkRetryAt = .distantPast
+            return
+        }
+        inputLink = nil
+        link.close()
+        inputLinkRetryAt = .distantPast
+    }
+
     /// 定时重连入口（状态未连接时尝试一次；数据链路另行重试）
     func ensureConnected() {
         if pendingDevice != nil { return }   // 正在多步连接中，别打断
         if !isConnected { connect() }
         ensureDataLink()
+        ensureInputLink()
     }
 
     // MARK: - 发送
@@ -1005,13 +1137,14 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     private enum FrameSource {
         case control
         case dataLink(DataLink)
+        case inputLink(DataLink)
     }
 
     private func reply(_ frame: Protocol.Frame, to source: FrameSource) {
         switch source {
         case .control:
             sendFrame(frame)
-        case .dataLink(let link):
+        case .dataLink(let link), .inputLink(let link):
             // ACK/PONG 很小，但 TCP 缓冲满时写仍可能阻塞；别占着主线程
             DispatchQueue.global(qos: .utility).async { [weak self] in
                 guard let self else { return }
@@ -1031,6 +1164,65 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
 
         case Protocol.FrameType.batchMeta:
             handleBatchMeta(frame, from: source)
+
+        // 手机下发的脚本步骤：本机用 CGEvent 注入，执行完回 ACK
+        case Protocol.FrameType.scriptStep:
+            var stepId = ""
+            var ok = false
+            var err: String?
+            if let obj = try? JSONSerialization.jsonObject(with: frame.payload) as? [String: Any] {
+                stepId = obj["id"] as? String ?? ""
+                do {
+                    try ScriptInjector.execute(obj)
+                    ok = true
+                } catch {
+                    err = error.localizedDescription
+                    NSLog("[PhoneLink] 脚本步骤执行失败：\(error.localizedDescription)")
+                }
+            } else {
+                err = "步骤载荷解析失败"
+            }
+            reply(Protocol.scriptStepAck(id: stepId, ok: ok, err: err), to: source)
+
+        // 手机发来的实时键鼠输入：直接注入，不逐条 ACK，每 100ms 回一次状态
+        case Protocol.FrameType.liveInput:
+            var applied: Int64 = 0
+            var ok = false
+            if let obj = try? JSONSerialization.jsonObject(with: frame.payload) as? [String: Any] {
+                (applied, ok) = ScriptInjector.applyLive(obj)
+                lastAppliedSeq = applied
+            }
+            let now = Date()
+            if !ok || now.timeIntervalSince(lastInputStateAt) >= 0.1 {
+                lastInputStateAt = now
+                reply(Protocol.inputState(appliedSeq: applied, ok: ok), to: source)
+            }
+
+        // 手机发起录制：开始/结束都由它控制，结束时把整份脚本一起回传
+        case Protocol.FrameType.recordCtrl:
+            let request = (try? JSONSerialization.jsonObject(with: frame.payload)) as? [String: Any]
+            let on = request?["on"] as? Bool ?? false
+            if on {
+                let started = ScriptRecorder.shared.start()
+                NSLog(started ? "[PhoneLink] 开始录制脚本" : "[PhoneLink] 录制启动失败")
+                reply(Protocol.recordResult(
+                    ok: started,
+                    recording: started,
+                    err: started ? nil : "需要辅助功能权限，或事件监听被系统拒绝"
+                ), to: source)
+            } else if let result = ScriptRecorder.shared.stop() {
+                NSLog("[PhoneLink] 录制完成：\(result.steps) 步")
+                reply(Protocol.recordResult(
+                    ok: true,
+                    recording: false,
+                    name: result.name,
+                    scriptJson: result.scriptJson
+                ), to: source)
+            } else {
+                reply(Protocol.recordResult(
+                    ok: false, recording: false, err: "没有录到任何操作"
+                ), to: source)
+            }
 
         case Protocol.FrameType.fileMeta:
             handleFileMeta(frame, from: source)
