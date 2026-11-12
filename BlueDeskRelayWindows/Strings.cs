@@ -33,7 +33,13 @@ internal static class Strings
     public static string SendFile => Get("发送文件…", "Send File…", "ファイル送信…", "파일 전송…");
     public static string SendFolder => Get("发送文件夹…", "Send Folder…", "フォルダ送信…", "폴더 전송…");
     public static string SendSelected => Get("发送资源管理器选中的文件\tCtrl+Alt+F", "Send Explorer Selection\tCtrl+Alt+F", "エクスプローラ選択ファイル送信\tCtrl+Alt+F", "탐색기 선택 파일 전송\tCtrl+Alt+F");
+    public static string DropZone => Get("投放区", "Drop Zone", "ドロップエリア", "드롭 영역");
+    public static string DropZoneHint => Get("把文件或文件夹拖到这里，\n松手即发送到手机", "Drop files or folders here\nto send to your phone", "ファイルまたはフォルダをここにドロップ\nスマホへ送信します", "파일이나 폴더를 여기에 놓으면\n휴대폰으로 전송됩니다");
+    public static string DropZoneClosedHint => Get("可从托盘菜单重新打开投放区", "Reopen the drop zone from the tray menu", "トレイメニューからドロップエリアを再度開けます", "트레이 메뉴에서 드롭 영역을 다시 열 수 있습니다");
     public static string Quit => Get("退出", "Quit", "終了", "종료");
+    public static string OpenPhoneLink => Get("打开手机复制的链接", "Open Link from Phone", "スマホのリンクを開く", "휴대폰 링크 열기");
+    public static string LinkReceivedTitle => Get("收到链接", "Link Received", "リンクを受信", "링크 수신");
+    public static string LinkReceivedBody => Get("已复制到本机剪贴板，可在托盘菜单直接打开", "Copied to clipboard — open it from the tray menu", "クリップボードにコピーしました。トレイメニューから開けます", "클립보드에 복사됨 — 트레이 메뉴에서 열 수 있습니다");
 
     // Connection state
     public static string ConnectedFormat => Get("已连接 {0}", "Connected {0}", "接続済み {0}", "연결됨 {0}");

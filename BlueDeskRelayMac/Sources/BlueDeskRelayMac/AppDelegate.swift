@@ -49,6 +49,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         // 通知授权（收发提示用；denied 时退回自带提示条，功能本体不受影响）
+        // 「用浏览器打开」动作注册在这里：手机复制链接时，通知上多一个按钮
+        let openLink = UNNotificationAction(identifier: "BD_OPEN_LINK",
+                                            title: L10n.t("notify.openLink"), options: [])
+        UNUserNotificationCenter.current().setNotificationCategories([
+            UNNotificationCategory(identifier: "BD_LINK", actions: [openLink],
+                                   intentIdentifiers: [], options: [])
+        ])
+        UNUserNotificationCenter.current().delegate = self
         UNUserNotificationCenter.current()
             .requestAuthorization(options: [.alert]) { [weak self] granted, _ in
                 UNUserNotificationCenter.current().getNotificationSettings { s in
@@ -110,6 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.menu = menu
         statusItem.button?.image = NSImage(systemSymbolName: "arrow.left.arrow.right",
                                            accessibilityDescription: L10n.t("app.name"))
+        installDropTargetOnStatusItem()
 
         // Finder 右键「服务」菜单的接收方（对应 Windows 资源管理器右键菜单）
         NSApp.servicesProvider = self
@@ -137,9 +146,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let head = [app, title].filter { !$0.isEmpty }.joined(separator: " · ")
             self.notify(head.isEmpty ? app : head, body.isEmpty ? title : body)
         }
-        // 剪贴板自动同步：手机 → Mac 静默写入系统剪贴板
+        // 剪贴板自动同步：手机 → Mac 静默写入系统剪贴板；是网址时额外给一个「用浏览器打开」
         link.onClipboard = { [weak self] text in
-            self?.applyClipboard(text)
+            guard let self else { return }
+            self.applyClipboard(text)
+            if self.httpURL(from: text) != nil { self.notifyLink(text) }
         }
         link.onFile = { [weak self] path, size in
             self?.notify(L10n.t("file.received"),
@@ -356,6 +367,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    // MARK: - 拖拽到菜单栏图标
+
+    /// 在状态栏按钮上盖一层投放层：把文件/文件夹拖到菜单栏图标即发送。
+    /// 覆盖层会把点击原样转发给按钮，因此菜单交互不受影响。
+    private func installDropTargetOnStatusItem() {
+        guard let button = statusItem.button else { return }
+        let overlay = StatusDropOverlay(frame: button.bounds)
+        overlay.autoresizingMask = [.width, .height]
+        overlay.button = button
+        overlay.onDrop = { [weak self] urls in self?.sendURLs(urls) }
+        button.addSubview(overlay)
+    }
+
     // MARK: - Finder 右键「服务」 / 快捷键发送
 
     /// Finder 右键 → 服务 →「发送到 BlueDesk」的接收方法。
@@ -486,6 +510,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         lastPasteboardChange = pasteboard.changeCount
     }
 
+    /// 手机复制的是网址：弹一条带「用浏览器打开」按钮的通知。
+    /// 系统通知不可用时退回自带浮层，此时只能提示（内容已在剪贴板里，可直接粘贴）。
+    private func notifyLink(_ text: String) {
+        let url = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard systemNotificationsAllowed else {
+            // 兜底浮层没有按钮，但可以点：点一下直接打开
+            NotificationHUD.shared.show(title: L10n.t("notify.linkTitle"), body: url) {
+                if let target = self.httpURL(from: url) { NSWorkspace.shared.open(target) }
+            }
+            return
+        }
+        let content = UNMutableNotificationContent()
+        content.title = L10n.t("notify.linkTitle")
+        content.body = url
+        content.categoryIdentifier = "BD_LINK"
+        content.userInfo = ["url": url]
+        UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+    }
+
+    /// 只认整条文本就是 http/https 链接的情况，避免把普通句子误判成网址
+    fileprivate func httpURL(from text: String) -> URL? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count <= 2048,
+              !trimmed.contains("\n"),
+              let url = URL(string: trimmed),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              let host = url.host, !host.isEmpty else { return nil }
+        return url
+    }
+
     private func notify(_ title: String, _ body: String) {
         // 系统通知被拒（开发签名每次重建都会失效）时改用自带浮层，保证提示可见
         guard systemNotificationsAllowed else {
@@ -503,4 +559,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
 private func formatSize(_ bytes: Int) -> String {
     ByteSize.human(bytes)
+}
+
+extension AppDelegate: UNUserNotificationCenterDelegate {
+    /// 点通知上的「用浏览器打开」；直接点通知本体也按同样处理（横幅上按钮要展开才看得到）
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        let content = response.notification.request.content
+        let tappedBody = response.actionIdentifier == UNNotificationDefaultActionIdentifier
+        let tappedAction = response.actionIdentifier == "BD_OPEN_LINK"
+        if (tappedAction || (tappedBody && content.categoryIdentifier == "BD_LINK")),
+           let text = content.userInfo["url"] as? String,
+           let url = httpURL(from: text) {
+            NSWorkspace.shared.open(url)
+        }
+        completionHandler()
+    }
 }

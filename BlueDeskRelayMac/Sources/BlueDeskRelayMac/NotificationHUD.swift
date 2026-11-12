@@ -19,17 +19,17 @@ final class NotificationHUD {
 
     private init() {}
 
-    func show(title: String, body: String) {
+    func show(title: String, body: String, onTap: (() -> Void)? = nil) {
         if Thread.isMainThread {
-            present(title: title, body: body)
+            present(title: title, body: body, onTap: onTap)
         } else {
             DispatchQueue.main.async { [weak self] in
-                self?.present(title: title, body: body)
+                self?.present(title: title, body: body, onTap: onTap)
             }
         }
     }
 
-    private func present(title: String, body: String) {
+    private func present(title: String, body: String, onTap: (() -> Void)?) {
         let hasBody = !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let height: CGFloat = hasBody ? 72 : 48
 
@@ -79,6 +79,20 @@ final class NotificationHUD {
         }
 
         panel.contentView = effect
+
+        // 带动作的提示（如「打开手机链接」）允许点击：拦下鼠标，点一下执行并收起
+        if let onTap {
+            panel.ignoresMouseEvents = false
+            let catcher = TapCatcher(frame: effect.bounds)
+            catcher.autoresizingMask = [.width, .height]
+            catcher.onTap = { [weak self, weak panel] in
+                onTap()
+                panel?.orderOut(nil)
+                if let panel { self?.panels.removeAll { $0 === panel } }
+            }
+            effect.addSubview(catcher)
+        }
+
         position(panel, height: height)
         panel.alphaValue = 0
         panel.orderFrontRegardless()
@@ -108,5 +122,15 @@ final class NotificationHUD {
         var top = visible.maxY - Self.margin
         for shown in panels { top -= shown.frame.height + Self.gap }
         panel.setFrameOrigin(NSPoint(x: visible.maxX - Self.width - Self.margin, y: top - height))
+    }
+}
+
+/// 提示条上的透明点击层：只有带动作的提示才加，避免无动作的提示挡住下面的窗口
+private final class TapCatcher: NSView {
+
+    var onTap: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        onTap?()
     }
 }

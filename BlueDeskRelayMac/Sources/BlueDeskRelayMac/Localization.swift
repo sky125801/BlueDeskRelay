@@ -107,6 +107,8 @@ enum L10n {
 
             "file.received": "收到文件",
             "file.receivedBody": "%@（%@）已保存到 Downloads/BlueDesk",
+            "notify.linkTitle": "手机复制了链接",
+            "notify.openLink": "用浏览器打开",
             "folder.received": "收到文件夹",
             "folder.receivedBody": "%@（%ld 个文件）已保存到 Downloads/BlueDesk",
             "text.received": "收到文本",
@@ -180,6 +182,8 @@ enum L10n {
 
             "file.received": "File received",
             "file.receivedBody": "%@ (%@) saved to Downloads/BlueDesk",
+            "notify.linkTitle": "Link copied on phone",
+            "notify.openLink": "Open in Browser",
             "folder.received": "Folder received",
             "folder.receivedBody": "%@ (%ld files) saved to Downloads/BlueDesk",
             "text.received": "Text received",
@@ -253,6 +257,8 @@ enum L10n {
 
             "file.received": "ファイルを受信しました",
             "file.receivedBody": "%@（%@）を Downloads/BlueDesk に保存しました",
+            "notify.linkTitle": "スマホでリンクをコピーしました",
+            "notify.openLink": "ブラウザで開く",
             "folder.received": "フォルダーを受信しました",
             "folder.receivedBody": "%@（%ld ファイル）を Downloads/BlueDesk に保存しました",
             "text.received": "テキストを受信しました",
@@ -326,6 +332,8 @@ enum L10n {
 
             "file.received": "파일 수신",
             "file.receivedBody": "%@ (%@)이(가) Downloads/BlueDesk에 저장되었습니다",
+            "notify.linkTitle": "휴대폰에서 링크를 복사했습니다",
+            "notify.openLink": "브라우저에서 열기",
             "folder.received": "폴더 수신",
             "folder.receivedBody": "%@ (%ld개 파일)이(가) Downloads/BlueDesk에 저장되었습니다",
             "text.received": "텍스트 수신",

@@ -34,6 +34,14 @@ public sealed class RelayApp : Form
     private readonly ToolStripMenuItem _sendFileItem;
     private readonly ToolStripMenuItem _sendFolderItem;
     private readonly ToolStripMenuItem _sendSelectedItem;
+    private readonly ToolStripMenuItem _dropZoneItem;
+    private readonly ToolStripMenuItem _openLinkItem;
+
+    /// <summary>手机同步来的最近一条网址（没有则为 null），供托盘菜单一键打开</summary>
+    private string? _lastClipboardLink;
+
+    /// <summary>拖拽投放区窗口（首次打开时创建，之后复用）</summary>
+    private Form? _dropZone;
     private readonly ToolStripMenuItem _maxBytesItem;
     private readonly CancellationTokenSource _lifeCts = new();
     private bool _quitting;
@@ -74,6 +82,8 @@ public sealed class RelayApp : Form
             async (_, _) => await SendFolderAsync()) { Enabled = false };
         _sendSelectedItem = new ToolStripMenuItem(Strings.SendSelected, null,
             async (_, _) => await SendSelectedFromExplorerAsync()) { Enabled = false };
+        _dropZoneItem = new ToolStripMenuItem(Strings.DropZone, null, (_, _) => ToggleDropZone());
+        _openLinkItem = new ToolStripMenuItem(Strings.OpenPhoneLink, null, (_, _) => OpenPhoneLink()) { Enabled = false };
         _maxBytesItem = new ToolStripMenuItem(Strings.MaxBytesText(RelaySettings.LoadMaxBytes()))
         {
             Enabled = false,
@@ -85,9 +95,11 @@ public sealed class RelayApp : Form
         menu.Items.Add(_connectItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_sendClipItem);
+        menu.Items.Add(_openLinkItem);
         menu.Items.Add(_sendFileItem);
         menu.Items.Add(_sendFolderItem);
         menu.Items.Add(_sendSelectedItem);
+        menu.Items.Add(_dropZoneItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_maxBytesItem);
         menu.Items.Add(new ToolStripSeparator());
@@ -350,12 +362,49 @@ public sealed class RelayApp : Form
     /// <summary>本机刚发出去的内容：剪贴板短暂抖动时不要重复发送</summary>
     private string? _lastSentClipboard;
 
-    /// <summary>手机同步来的剪贴板：静默写入，不提示（自动同步不该打断用户）</summary>
+    /// <summary>
+    /// 手机同步来的剪贴板：静默写入本机剪贴板；
+    /// 内容是网址时额外提示一次，但只在托盘菜单里提供「打开」（气泡不支持按钮）。
+    /// </summary>
     private void OnClipboardReceived(string text) => Post(() =>
     {
         _suppressedClipboard = text;
         if (!TrySetClipboard(text)) RelayLog.Write("剪贴板同步写入本机失败");
+
+        var link = HttpUrl(text);
+        if (link == null || link == _lastClipboardLink) return;
+        _lastClipboardLink = link;
+        _openLinkItem.Enabled = true;
+        _tray.ShowBalloonTip(2500, Strings.LinkReceivedTitle, Strings.LinkReceivedBody, ToolTipIcon.Info);
     });
+
+    /// <summary>托盘菜单「打开手机复制的链接」：用默认浏览器打开最近一条网址</summary>
+    private void OpenPhoneLink()
+    {
+        if (_lastClipboardLink == null) return;
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_lastClipboardLink)
+            {
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            _tray.ShowBalloonTip(2000, Strings.LinkReceivedTitle, ex.Message, ToolTipIcon.Error);
+        }
+    }
+
+    /// <summary>整条文本就是 http/https 链接时返回规范化地址，其余情况返回 null</summary>
+    private static string? HttpUrl(string text)
+    {
+        var trimmed = text.Trim();
+        if (trimmed.Length == 0 || trimmed.Length > 2048 || trimmed.Contains('\n')) return null;
+        return Uri.TryCreate(trimmed, UriKind.Absolute, out var uri) &&
+               (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+            ? uri.AbsoluteUri
+            : null;
+    }
 
     /// <summary>
     /// 轮询本机剪贴板并回传手机。
@@ -508,6 +557,96 @@ public sealed class RelayApp : Form
         {
             _tray.ShowBalloonTip(3000, Strings.SendFolderFailed, ex.Message, ToolTipIcon.Error);
         }
+    }
+
+    // ── 拖拽投放区 ──
+
+    /// <summary>
+    /// 显示/隐藏投放区。
+    ///
+    /// Windows 的托盘图标由 explorer 持有，第三方程序无法接收拖到图标上的 OLE 拖放，
+    /// 因此这里提供一个可开合的小窗口作为投放目标，位置贴近右下角托盘区。
+    /// </summary>
+    private void ToggleDropZone()
+    {
+        _dropZone ??= BuildDropZone();
+        if (_dropZone.Visible)
+        {
+            _dropZone.Hide();
+            _dropZoneItem.Checked = false;
+            return;
+        }
+
+        var area = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1280, 720);
+        _dropZone.Location = new Point(area.Right - _dropZone.Width - 24, area.Bottom - _dropZone.Height - 24);
+        _dropZone.Show();
+        _dropZone.BringToFront();
+        _dropZoneItem.Checked = true;
+    }
+
+    private Form BuildDropZone()
+    {
+        var zone = new Form
+        {
+            FormBorderStyle = FormBorderStyle.None,
+            ShowInTaskbar = false,
+            TopMost = true,
+            StartPosition = FormStartPosition.Manual,
+            ClientSize = new Size(280, 140),
+            BackColor = Color.FromArgb(24, 28, 36),
+            Opacity = 0.95,
+            Text = Strings.DropZone,
+        };
+
+        var hint = new Label
+        {
+            Dock = DockStyle.Fill,
+            ForeColor = Color.FromArgb(214, 222, 234),
+            Font = new Font("Segoe UI", 10F),
+            TextAlign = ContentAlignment.MiddleCenter,
+            Text = Strings.DropZoneHint,
+            AllowDrop = true,
+        };
+        var close = new Label
+        {
+            Text = "×",
+            ForeColor = Color.FromArgb(150, 160, 176),
+            Font = new Font("Segoe UI", 11F),
+            Size = new Size(24, 24),
+            Location = new Point(zone.ClientSize.Width - 28, 4),
+            TextAlign = ContentAlignment.MiddleCenter,
+            Cursor = Cursors.Hand,
+        };
+        close.Click += (_, _) =>
+        {
+            zone.Hide();
+            _dropZoneItem.Checked = false;
+            _tray.ShowBalloonTip(1500, Strings.DropZone, Strings.DropZoneClosedHint, ToolTipIcon.Info);
+        };
+
+        // 窗口与文字都要挂拖拽事件：拖到提示文字上时事件由 Label 接收
+        foreach (var target in new Control[] { zone, hint })
+        {
+            target.AllowDrop = true;
+            target.DragEnter += (_, e) =>
+            {
+                var hasFiles = e.Data?.GetDataPresent(DataFormats.FileDrop) == true;
+                e.Effect = hasFiles ? DragDropEffects.Copy : DragDropEffects.None;
+                zone.BackColor = hasFiles ? Color.FromArgb(38, 64, 96) : Color.FromArgb(24, 28, 36);
+            };
+            target.DragLeave += (_, _) => zone.BackColor = Color.FromArgb(24, 28, 36);
+            target.DragDrop += async (_, e) =>
+            {
+                zone.BackColor = Color.FromArgb(24, 28, 36);
+                if (e.Data?.GetData(DataFormats.FileDrop) is not string[] paths || paths.Length == 0) return;
+                await SendFilesFromShellAsync(paths);
+            };
+        }
+
+        zone.Controls.Add(hint);
+        zone.Controls.Add(close);
+        close.BringToFront();
+        return zone;
     }
 
     /// <summary>
