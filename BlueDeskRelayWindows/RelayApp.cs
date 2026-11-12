@@ -153,6 +153,19 @@ public sealed class RelayApp : Form
             }
         });
 
+        // 通知镜像可能从控制链路或 Wi-Fi 数据链路到达，两个实例都要接
+        _link.NotificationReceived += OnMirroredNotification;
+        _dataLink.NotificationReceived += OnMirroredNotification;
+
+        // 剪贴板自动同步：静默写入，不弹气泡；写入后记下内容，避免轮询把它回传
+        _link.ClipboardReceived += OnClipboardReceived;
+        _dataLink.ClipboardReceived += OnClipboardReceived;
+
+        // Windows 剪贴板没有跨进程通知，只能轮询：0.6 秒一次，内容没变就没有开销
+        _clipboardTimer = new System.Windows.Forms.Timer { Interval = 600 };
+        _clipboardTimer.Tick += (_, _) => PollClipboard();
+        _clipboardTimer.Start();
+
         // 文件/文件夹可能从蓝牙控制链路或 TCP 数据链路到达，两个实例共用同一套 UI 反馈
         _link.FileReceived += OnFileReceived;
         _dataLink.FileReceived += OnFileReceived;
@@ -327,6 +340,64 @@ public sealed class RelayApp : Form
             Strings.Format(Strings.FolderReceivedBodyFormat, folder, files), ToolTipIcon.Info);
     });
 
+    // ── 剪贴板自动同步 ──
+
+    private System.Windows.Forms.Timer? _clipboardTimer;
+
+    /// <summary>刚由手机写入的内容：轮询看到它时不再回传，避免两端来回弹</summary>
+    private string? _suppressedClipboard;
+
+    /// <summary>本机刚发出去的内容：剪贴板短暂抖动时不要重复发送</summary>
+    private string? _lastSentClipboard;
+
+    /// <summary>手机同步来的剪贴板：静默写入，不提示（自动同步不该打断用户）</summary>
+    private void OnClipboardReceived(string text) => Post(() =>
+    {
+        _suppressedClipboard = text;
+        if (!TrySetClipboard(text)) RelayLog.Write("剪贴板同步写入本机失败");
+    });
+
+    /// <summary>
+    /// 轮询本机剪贴板并回传手机。
+    /// 未连接时直接返回、不排队：断线期间复制的内容没有同步价值，连上后回传旧内容反而会打架。
+    /// </summary>
+    private void PollClipboard()
+    {
+        if (!_link.IsConnected) return;
+        string? text;
+        try
+        {
+            text = Clipboard.ContainsText() ? Clipboard.GetText() : null;
+        }
+        catch (Exception)
+        {
+            return; // 剪贴板被其它程序占用时跳过这一轮
+        }
+        if (string.IsNullOrEmpty(text)) return;
+        if (text == _suppressedClipboard)
+        {
+            _suppressedClipboard = null;
+            return;
+        }
+        if (text == _lastSentClipboard) return;
+        _lastSentClipboard = text;
+        _ = _link.SendClipboardAsync(text);
+    }
+
+    /// <summary>
+    /// 手机通知镜像：托盘气泡抬头拼「应用 · 标题」，正文过长按气泡上限截断。
+    /// 不发系统 Toast，避免用户没装欢迎中心时看不到；气泡与其它收发提示风格一致。
+    /// </summary>
+    private void OnMirroredNotification(string app, string title, string body) => Post(() =>
+    {
+        var head = string.IsNullOrWhiteSpace(title) ? app : $"{app} · {title}";
+        if (head.Length == 0) return;
+        if (head.Length > 60) head = head[..60];
+        var text = string.IsNullOrWhiteSpace(body) ? title : body;
+        if (text.Length > 240) text = text[..240];
+        _tray.ShowBalloonTip(4000, head, text, ToolTipIcon.None);
+    });
+
     private void OnMaxBytesChanged(long max) => Post(() =>
     {
         _maxBytesItem.Text = Strings.MaxBytesText(max);
@@ -448,7 +519,7 @@ public sealed class RelayApp : Form
         // 手机没连上时先排队，等 ConnectionChanged 连上后再补发
         if (!_link.IsConnected)
         {
-            var queued = paths.Where(File.Exists).ToList();
+            var queued = paths.Where(p => File.Exists(p) || Directory.Exists(p)).ToList();
             if (queued.Count == 0) return;
             _pendingShellFiles.AddRange(queued);
             _tray.ShowBalloonTip(2000, Strings.WaitingConnection,
@@ -461,7 +532,26 @@ public sealed class RelayApp : Form
             try
             {
                 var path = raw.Trim();
-                if (path.Length == 0 || !File.Exists(path)) continue;
+                if (path.Length == 0) continue;
+
+                // 文件夹：右键菜单用 AllFilesystemObjects，选中文件夹时也会走到这里
+                if (Directory.Exists(path))
+                {
+                    if (!_link.IsConnected)
+                    {
+                        _tray.ShowBalloonTip(1500, Strings.NotConnected,
+                            Strings.NotConnectedYet, ToolTipIcon.Warning);
+                        continue;
+                    }
+                    _tray.ShowBalloonTip(1500, Strings.SendingTitle,
+                        Strings.SendingFolderStats, ToolTipIcon.Info);
+                    await _fileSendGate.WaitAsync();
+                    try { await _link.SendFolderAsync(path); }
+                    finally { _fileSendGate.Release(); }
+                    continue;
+                }
+
+                if (!File.Exists(path)) continue;
 
                 if (!_link.IsConnected)
                 {
@@ -657,12 +747,20 @@ public sealed class RelayApp : Form
 }
 
 /// <summary>
-/// 资源管理器右键菜单：HKCU\Software\Classes\*\shell\BlueDeskSend
+/// 资源管理器右键菜单：HKCU\Software\Classes\AllFilesystemObjects\shell\BlueDeskSend
+///
+/// 用 AllFilesystemObjects 而不是 *：它同时匹配文件和文件夹，混选时菜单也不会消失。
+/// MultiSelectModel=Player 让资源管理器一次调用就把所有选中项追加到命令行，
+/// 不必为每个文件各起一个进程（旧版用 Document 逐个调用，靠命名管道合并）。
 /// 只写当前用户，不需要管理员权限；程序每次启动都刷新一次，保证路径最新。
 /// </summary>
 internal static class ExplorerMenu
 {
-    private const string KeyPath = @"Software\Classes\*\shell\BlueDeskSend";
+    private const string KeyPath = @"Software\Classes\AllFilesystemObjects\shell\BlueDeskSend";
+
+    /// <summary>旧版本注册在 * 下，启动时顺手删掉，避免菜单里出现两项</summary>
+    private const string LegacyKeyPath = @"Software\Classes\*\shell\BlueDeskSend";
+
     private static readonly string DisplayName = Strings.SendToBlueDesk;
 
     public static void Install()
@@ -672,12 +770,15 @@ internal static class ExplorerMenu
             var exe = Environment.ProcessPath;
             if (string.IsNullOrEmpty(exe)) return;
 
+            try { Registry.CurrentUser.DeleteSubKeyTree(LegacyKeyPath, false); }
+            catch (Exception) { /* 没有旧键或没权限都无所谓 */ }
+
             using var shell = Registry.CurrentUser.CreateSubKey(KeyPath, writable: true);
             if (shell is null) return;
             shell.SetValue(null, DisplayName);
             shell.SetValue("Icon", exe);
-            // Document：多选时资源管理器逐个调用；本程序用命名管道把它们并到已运行实例
-            shell.SetValue("MultiSelectModel", "Document");
+            // Player：多选时只调用一次，所有选中项依次追加到命令行
+            shell.SetValue("MultiSelectModel", "Player");
 
             using var command = shell.CreateSubKey("command", writable: true);
             command?.SetValue(null, $"\"{exe}\" --send-file \"%1\"");
@@ -782,14 +883,23 @@ internal static class Program
         Application.Run(new RelayApp(shellFiles));
     }
 
-    /// <summary>解析资源管理器传入的 --send-file "路径"（可能多次）</summary>
+    /// <summary>
+    /// 解析资源管理器传入的路径：`--send-file "a" "b" ...`。
+    /// 多选时参数名只出现一次、路径追加在后面；也兼容旧版重复出现 --send-file 的格式。
+    /// </summary>
     private static List<string> ParseShellFiles(string[] args)
     {
         var files = new List<string>();
-        for (int i = 0; i < args.Length - 1; i++)
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        bool collecting = false;
+        foreach (var arg in args)
         {
-            if (string.Equals(args[i], "--send-file", StringComparison.OrdinalIgnoreCase))
-                files.Add(args[++i]);
+            if (string.Equals(arg, "--send-file", StringComparison.OrdinalIgnoreCase))
+            {
+                collecting = true;
+                continue;
+            }
+            if (collecting && seen.Add(arg)) files.Add(arg);
         }
         return files;
     }

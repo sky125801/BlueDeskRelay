@@ -13,6 +13,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private let link = PhoneLink()
 
+    /// 系统通知是否可用；不可用时 [notify] 退回自带浮层
+    private var systemNotificationsAllowed = false
     private var statusMenuItem: NSMenuItem!
     private var sendClipItem: NSMenuItem!
     private var sendFileItem: NSMenuItem!
@@ -46,9 +48,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSLog("[BlueDesk Relay] 未获辅助功能授权，已请求系统对话框")
         }
 
-        // 通知授权（收发提示用；denied 不影响功能本体）
+        // 通知授权（收发提示用；denied 时退回自带提示条，功能本体不受影响）
         UNUserNotificationCenter.current()
-            .requestAuthorization(options: [.alert]) { _, _ in }
+            .requestAuthorization(options: [.alert]) { [weak self] granted, _ in
+                UNUserNotificationCenter.current().getNotificationSettings { s in
+                    let allowed = granted ||
+                        s.authorizationStatus == .authorized ||
+                        s.authorizationStatus == .provisional
+                    DispatchQueue.main.async { self?.systemNotificationsAllowed = allowed }
+                }
+            }
+
+        // 剪贴板自动同步：Mac 端变化回传手机（手机侧开关关闭时会被忽略）
+        startClipboardWatch()
 
         // 菜单
         let menu = NSMenu()
@@ -111,6 +123,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         link.onText = { [weak self] text in
             self?.receiveText(text)
+        }
+        // 手机通知镜像：用系统通知展示，应用名 + 标题做抬头，正文做内容
+        link.onNotification = { [weak self] json in
+            guard let self,
+                  let data = json.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return }
+            let app = (obj["app"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+            let title = (obj["title"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+            let body = (obj["text"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+            guard !title.isEmpty || !body.isEmpty else { return }
+            let head = [app, title].filter { !$0.isEmpty }.joined(separator: " · ")
+            self.notify(head.isEmpty ? app : head, body.isEmpty ? title : body)
+        }
+        // 剪贴板自动同步：手机 → Mac 静默写入系统剪贴板
+        link.onClipboard = { [weak self] text in
+            self?.applyClipboard(text)
         }
         link.onFile = { [weak self] path, size in
             self?.notify(L10n.t("file.received"),
@@ -416,7 +445,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         notify(L10n.t("text.received"), L10n.t("text.receivedBody", text.count))
     }
 
+    // MARK: - 剪贴板自动同步
+
+    private var clipboardTimer: Timer?
+    /// 上次轮询到的 changeCount：没变化就不读取内容
+    private var lastPasteboardChange = 0
+    /// 刚由手机写入的内容：轮询再次看到时不再回传，避免两端来回弹
+    private var suppressedClipboard: String?
+
+    /// macOS 没有可靠的跨进程剪贴板通知，这里 0.6 秒轮询一次 changeCount；
+    /// 只有计数变化时才读字符串，平时开销可以忽略。
+    private func startClipboardWatch() {
+        lastPasteboardChange = NSPasteboard.general.changeCount
+        let timer = Timer(timeInterval: 0.6, repeats: true) { [weak self] _ in
+            self?.pollClipboard()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        clipboardTimer = timer
+    }
+
+    private func pollClipboard() {
+        let pasteboard = NSPasteboard.general
+        guard pasteboard.changeCount != lastPasteboardChange else { return }
+        lastPasteboardChange = pasteboard.changeCount
+        guard let text = pasteboard.string(forType: .string), !text.isEmpty else { return }
+        if text == suppressedClipboard {
+            suppressedClipboard = nil
+            return
+        }
+        suppressedClipboard = nil
+        link.sendClipboard(text)
+    }
+
+    /// 手机同步来的文本：写入剪贴板，并让轮询忽略这次变化
+    private func applyClipboard(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        suppressedClipboard = text
+        lastPasteboardChange = pasteboard.changeCount
+    }
+
     private func notify(_ title: String, _ body: String) {
+        // 系统通知被拒（开发签名每次重建都会失效）时改用自带浮层，保证提示可见
+        guard systemNotificationsAllowed else {
+            NotificationHUD.shared.show(title: title, body: body)
+            return
+        }
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body

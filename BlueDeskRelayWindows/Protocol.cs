@@ -75,6 +75,12 @@ public static class Protocol
 
         /// <summary>输入链路状态（PC → 手机，约 100ms 一次）：{"appliedSeq":1022,"rtt":0,"ok":1}</summary>
         public const byte InputState = 0x15;
+
+        /// <summary>通知镜像（手机 → PC）：{"app","title","text","at","pkg"}</summary>
+        public const byte Notification = 0x16;
+
+        /// <summary>剪贴板同步（双向）：{"text":"…","at":…}</summary>
+        public const byte Clipboard = 0x17;
     }
 
     public const byte FlagNeedAck = 0x01;
@@ -177,6 +183,10 @@ public static class Protocol
 
     public static Frame Text(string content, bool needAck = true) =>
         new(FrameType.Text, Encoding.UTF8.GetBytes(content), needAck);
+
+    /// <summary>CLIPBOARD：剪贴板同步（载荷已是 JSON）</summary>
+    public static Frame ClipboardJson(string json) =>
+        new(FrameType.Clipboard, Encoding.UTF8.GetBytes(json), false);
 
     public static Frame FileMeta(string json) =>
         new(FrameType.FileMeta, Encoding.UTF8.GetBytes(json), false);

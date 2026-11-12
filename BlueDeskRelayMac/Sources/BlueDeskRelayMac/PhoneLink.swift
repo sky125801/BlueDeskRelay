@@ -24,6 +24,10 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
 
     /// 收到文本（主线程回调）
     var onText: ((String) -> Void)?
+    /// 收到手机通知镜像（主线程回调，参数：JSON 字符串，字段 app/title/text/at/pkg）
+    var onNotification: ((String) -> Void)?
+    /// 收到手机同步来的剪贴板文本（主线程回调，静默写入，不提示）
+    var onClipboard: ((String) -> Void)?
     /// 收到文件（主线程回调，参数：落盘路径 / 大小）
     var onFile: ((String, Int) -> Void)?
     /// 收到文件夹批次（主线程回调，参数：文件夹路径 / 文件数）
@@ -791,6 +795,12 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
         sendFrame(Protocol.text(content))
     }
 
+    /// 发送剪贴板文本：静默同步，未连接时直接丢弃（不弹错误，避免自动同步打扰用户）
+    func sendClipboard(_ text: String) {
+        guard isConnected, !text.isEmpty, text.utf8.count <= 64 * 1024 else { return }
+        sendFrame(Protocol.clipboard(text))
+    }
+
     /// 发送文件：按块从磁盘流式读取后入队，写线程负责流控与重试。
     ///
     /// 旧实现把整份文件读进内存、在后台线程里死循环 `writeSync`，任何一次写失败
@@ -1164,6 +1174,20 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
 
         case Protocol.FrameType.batchMeta:
             handleBatchMeta(frame, from: source)
+
+        // 手机通知镜像：交给 AppDelegate 用系统通知展示
+        case Protocol.FrameType.notification:
+            let json = String(decoding: frame.payload, as: UTF8.self)
+            onNotification?(json)
+
+        // 剪贴板同步：静默写入系统剪贴板，不做任何提示
+        case Protocol.FrameType.clipboard:
+            let raw = String(decoding: frame.payload, as: UTF8.self)
+            if let data = raw.data(using: .utf8),
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let text = obj["text"] as? String, !text.isEmpty {
+                onClipboard?(text)
+            }
 
         // 手机下发的脚本步骤：本机用 CGEvent 注入，执行完回 ACK
         case Protocol.FrameType.scriptStep:

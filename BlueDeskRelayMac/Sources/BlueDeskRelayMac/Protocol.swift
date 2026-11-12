@@ -54,6 +54,12 @@ enum Protocol {
 
         /// 输入链路状态（PC → 手机，约 100ms 一次）
         static let inputState: UInt8 = 0x15
+
+        /// 通知镜像（手机 → PC）：{"app","title","text","at","pkg"}
+        static let notification: UInt8 = 0x16
+
+        /// 剪贴板同步（双向）：{"text":"…","at":…}
+        static let clipboard: UInt8 = 0x17
     }
 
     static let flagNeedAck: UInt8 = 0x01
@@ -149,6 +155,12 @@ enum Protocol {
     static func inputState(appliedSeq: Int64, ok: Bool) -> Frame {
         let json = "{\"appliedSeq\":\(appliedSeq),\"rtt\":0,\"ok\":\(ok ? 1 : 0)}"
         return Frame(type: FrameType.inputState, payload: Data(json.utf8))
+    }
+
+    /// CLIPBOARD：剪贴板同步（不落记录、不播提示音，两端各自抑制回环）
+    static func clipboard(_ text: String) -> Frame {
+        let json = "{\"text\":\"\(jsonEscaped(text))\"}"
+        return Frame(type: FrameType.clipboard, payload: Data(json.utf8))
     }
 
     /// SCRIPT_STEP_ACK：单个脚本步骤的执行结果

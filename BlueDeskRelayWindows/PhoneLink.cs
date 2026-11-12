@@ -111,6 +111,12 @@ public sealed class PhoneLink : IDisposable
     /// <summary>收到文本（在后台线程回调，调用方需自行切到 UI 线程）</summary>
     public event Action<string>? TextReceived;
 
+    /// <summary>收到手机通知镜像（参数：应用名 / 标题 / 正文，后台线程回调）</summary>
+    public event Action<string, string, string>? NotificationReceived;
+
+    /// <summary>收到手机同步来的剪贴板文本（后台线程回调，调用方需自行切到 UI 线程）</summary>
+    public event Action<string>? ClipboardReceived;
+
     /// <summary>收到文件（已完整落盘）</summary>
     public event Action<string, long>? FileReceived;
 
@@ -609,6 +615,43 @@ public sealed class PhoneLink : IDisposable
                 HandleNetInfo(frame);
                 break;
 
+            case Protocol.FrameType.Notification:
+            {
+                try
+                {
+                    var obj = System.Text.Json.JsonDocument.Parse(Encoding.UTF8.GetString(frame.Payload)).RootElement;
+                    var app = obj.TryGetProperty("app", out var a) ? a.GetString() ?? "" : "";
+                    var title = obj.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "";
+                    var body = obj.TryGetProperty("text", out var x) ? x.GetString() ?? "" : "";
+                    if (title.Length == 0 && body.Length == 0) break;
+                    NotificationReceived?.Invoke(app, title, body);
+                }
+                catch (Exception ex)
+                {
+                    RelayLog.Write($"通知镜像解析失败：{ex.Message}");
+                }
+                break;
+            }
+
+            case Protocol.FrameType.Clipboard:
+            {
+                try
+                {
+                    var obj = System.Text.Json.JsonDocument.Parse(Encoding.UTF8.GetString(frame.Payload)).RootElement;
+                    if (obj.TryGetProperty("text", out var value))
+                    {
+                        // 不能叫 text：switch 各分支共享作用域，TEXT 分支已经用掉了这个名字
+                        var clipText = value.GetString();
+                        if (!string.IsNullOrEmpty(clipText)) ClipboardReceived?.Invoke(clipText);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    RelayLog.Write($"剪贴板同步解析失败：{ex.Message}");
+                }
+                break;
+            }
+
             case Protocol.FrameType.BatchMeta:
             {
                 try
@@ -971,6 +1014,28 @@ public sealed class PhoneLink : IDisposable
         try
         {
             await SendAsync(Protocol.Text(content), CancellationToken.None);
+        }
+        finally
+        {
+            _sequenceLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// 发送剪贴板文本：静默同步，未连接或内容超限时直接丢弃（不弹提示，避免自动同步打断用户）
+    /// </summary>
+    public async Task SendClipboardAsync(string text)
+    {
+        if (!IsConnected || string.IsNullOrEmpty(text) || text.Length > 64 * 1024) return;
+        var json = System.Text.Json.JsonSerializer.Serialize(new { text });
+        await _sequenceLock.WaitAsync(CancellationToken.None);
+        try
+        {
+            await SendAsync(Protocol.ClipboardJson(json), CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            RelayLog.Write($"发送剪贴板失败：{ex.Message}");
         }
         finally
         {
