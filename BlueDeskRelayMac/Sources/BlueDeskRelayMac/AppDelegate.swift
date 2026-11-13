@@ -378,13 +378,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)   // accessory 应用需要手动激活才能弹窗
         panel.begin { [weak self] response in
             guard let self, response == .OK, let url = panel.url else { return }
-            let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int ?? 0
-            if size > 64 * 1024 * 1024 {
-                self.notify(L10n.t("file.tooLarge"), L10n.t("file.tooLargeLimit"))
-                return
-            }
             self.notify(L10n.t("send.sending"), L10n.t("send.sendingBody", url.lastPathComponent))
-            self.link.sendFile(at: url)
+            self.link.sendFile(at: url)   // 上限由手机下发，sendFile 内部校验
         }
     }
 
@@ -438,13 +433,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func sendFileURL(_ url: URL) {
-        let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int ?? 0
-        if size > 64 * 1024 * 1024 {
-            notify(L10n.t("file.tooLarge"), L10n.t("file.tooLargeFormat", url.lastPathComponent))
-            return
-        }
         notify(L10n.t("send.sending"), L10n.t("send.sendingBody", url.lastPathComponent))
-        link.sendFile(at: url)
+        link.sendFile(at: url)   // 上限由手机下发，sendFile 内部校验
     }
 
     /// AppleScript 读 Finder 选中项（首次使用会弹「自动化」授权）
