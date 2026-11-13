@@ -5,7 +5,7 @@
 <h1 align="center">BlueDesk</h1>
 
 <p align="center">
-  <b>Main app</b>: BlueDesk (Android)
+  <b>Main app</b>: <a href="https://play.google.com/store/apps/details?id=com.lingzhi.bluedesk">BlueDesk (Android) · Google Play</a>
 </p>
 
 <p align="center">
