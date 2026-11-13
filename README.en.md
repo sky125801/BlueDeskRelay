@@ -44,7 +44,7 @@ so they **interoperate freely** — Windows sending to macOS, or Android to Wind
 | Global hotkey | — | `Ctrl+Alt+B` / `Ctrl+Alt+F` | `Ctrl+Opt+B` / `Ctrl+Opt+F` |
 | OS integration | share target | Explorer context menu | Finder Services |
 | Runs in the background | foreground service + boot start | tray + `shell:startup` | menu bar + login items |
-| Honors the phone's transfer limit | ✓ | ✓ | — fixed at 64 MB |
+| Honors the phone's transfer limit | ✓ | ✓ | ✓ |
 
 `—` means the feature isn't implemented on that platform yet; transfers between the other
 two still work.
