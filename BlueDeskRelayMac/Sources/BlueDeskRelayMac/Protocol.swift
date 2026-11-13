@@ -127,6 +127,10 @@ enum Protocol {
         Frame(type: FrameType.ack, payload: Data([type]))
     }
 
+    static func ping() -> Frame {
+        Frame(type: FrameType.ping, payload: Data())
+    }
+
     static func pong() -> Frame {
         Frame(type: FrameType.pong, payload: Data())
     }

@@ -56,6 +56,10 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     private var needAclReset = false
     /// 通道校验定时器
     private var verifyTimer: Timer?
+    /// 控制链路最近一次收到任何帧的时间
+    private var lastInboundAt = Date()
+    /// 控制链路心跳定时器
+    private var heartbeatTimer: Timer?
 
     /// 手机下发的设备策略：断开后是否锁屏。
     /// 默认开启；缓存到本地是因为真正需要锁屏时链路已经断了，问不到手机。
@@ -383,10 +387,17 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
                                                      input: true, text: true))
                     NSLog("[PhoneLink] 已连接 \(self.phoneName)（RFCOMM 通道 \(channelID)，MTU \(self.mtu)，第 \(attempt) 次尝试）")
                     self.startChannelVerify(opened, channelID: channelID, device: phone)
+                    self.startHeartbeat()
                     return
                 }
 
                 NSLog("[PhoneLink] 第 \(attempt) 次打开 RFCOMM 失败：0x\(String(status, radix: 16))（isConnected=\(phone.isConnected())）")
+
+                // 手机每次重启中转服务都会重新分配 RFCOMM 通道，而 macOS 的 SDP
+                // 缓存不会自动失效：打开失败基本就是缓存里的通道号过期了。
+                // 下次连接前断开 ACL 并重新查询，否则会一直拿旧通道号重试。
+                self.forceSdpRefresh = true
+                self.needAclReset = true
 
                 guard self.connectAttempt < 3 else {
                     self.pendingDevice = nil
@@ -409,8 +420,29 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
         }
     }
 
-    /// 校验刚打开的通道是不是真的连到了手机的中转服务。
+    /// 控制链路心跳：每 10 秒发一次 PING，45 秒收不到任何帧就判定链路已死。
     ///
+    /// macOS 并不总会在对端进程消失时回调 `rfcommChannelClosed`，
+    /// 控制链路会一直显示「已连接」却再也收不到数据 —— 手机改过的传输上限、
+    /// 设备策略都同步不过来，表现就是 PC 一直按旧值限制。
+    /// 手机收到 PING 会回 PONG 并顺带补发最新的 CONFIG / DEVICE_POLICY。
+    private func startHeartbeat() {
+        heartbeatTimer?.invalidate()
+        lastInboundAt = Date()
+        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
+            guard let self, self.isConnected else { return }
+            let idle = Date().timeIntervalSince(self.lastInboundAt)
+            guard idle < 45 else {
+                NSLog("[PhoneLink] 控制链路 \(Int(idle)) 秒无任何响应，判定已断开")
+                self.onControlLinkLost?()
+                self.disconnect()
+                return
+            }
+            self.sendFrame(Protocol.ping())
+        }
+    }
+
+    /// 校验刚打开的通道是不是真的连到了手机的中转服务。
     /// 手机 accept 后会立刻下发 CONFIG + NET_INFO；3 秒内一帧都没收到，
     /// 说明用的是 SDP 缓存里的过期通道号（macOS 在这种情况仍会返回打开成功）。
     private func startChannelVerify(_ opened: IOBluetoothRFCOMMChannel,
@@ -464,6 +496,8 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
         connectAttempt = 0
         verifyTimer?.invalidate()
         verifyTimer = nil
+        heartbeatTimer?.invalidate()
+        heartbeatTimer = nil
         refreshedForStaleChannel = false
         forceSdpRefresh = false
         closeDataLink()
@@ -551,6 +585,7 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
         wifiCooldownUntil = .distantPast
         startWriter(.tcp(conn))
         startTcpReader(conn)
+        startHeartbeat()
         onStateChange?(true, phoneName)
         sendFrame(Protocol.hello(localName))
         sendFrame(Protocol.ident(identJSON(wifi: true)))
@@ -570,6 +605,7 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
                 let frames = self.parser.feed(data)
                 if frames.isEmpty { continue }
                 DispatchQueue.main.async {
+                    self.lastInboundAt = Date()
                     for frame in frames { self.handleFrame(frame) }
                 }
             }
@@ -1208,6 +1244,7 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
                            data dataPointer: UnsafeMutableRawPointer!,
                            length dataLength: Int) {
         sawInboundFrame = true
+        lastInboundAt = Date()
         let incoming = Data(bytes: dataPointer, count: dataLength)
         let frames = parser.feed(incoming)
         for frame in frames {
