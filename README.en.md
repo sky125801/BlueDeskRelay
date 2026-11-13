@@ -40,7 +40,7 @@ so they **interoperate freely** — Windows sending to macOS, or Android to Wind
 | Send a whole folder | ✓ via SAF tree | ✓ `BATCH_*` frames | — |
 | Receive text → clipboard | ✓ plus a notification | ✓ plus a balloon | ✓ plus a notification |
 | Receive files | ✓ `Download/BlueDesk` | ✓ `Downloads\BlueDesk` | ✓ `~/Downloads/BlueDesk` |
-| Receive a folder | ✓ | ✓ | — |
+| Receive a folder | ✓ | ✓ | ✓ `~/Downloads/BlueDesk` |
 | Global hotkey | — | `Ctrl+Alt+B` / `Ctrl+Alt+F` | `Ctrl+Opt+B` / `Ctrl+Opt+F` |
 | OS integration | share target | Explorer context menu | Finder Services |
 | Runs in the background | foreground service + boot start | tray + `shell:startup` | menu bar + login items |

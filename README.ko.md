@@ -37,7 +37,7 @@ BlueDesk 스마트폰 앱의 '릴레이' 페이지와 함께 사용하는 3개 �
 | 폴더 전체 전송 | ✓ SAF 디렉터리 트리 사용 | ✓ `BATCH_*` 프레임 | — |
 | 텍스트 수신 → 클립보드 | ✓ 알림도 표시 | ✓ 풍선 알림도 표시 | ✓ 알림도 표시 |
 | 파일 수신 | ✓ `Download/BlueDesk` | ✓ `Downloads\BlueDesk` | ✓ `~/Downloads/BlueDesk` |
-| 폴더 수신 | ✓ | ✓ | — |
+| 폴더 수신 | ✓ | ✓ | ✓ `~/Downloads/BlueDesk` |
 | 전역 단축키 | — | `Ctrl+Alt+B` / `Ctrl+Alt+F` | `Ctrl+Opt+B` / `Ctrl+Opt+F` |
 | OS 통합 | 시스템 공유 대상 | 탐색기 우클릭 메뉴 | Finder '서비스' 메뉴 |
 | 백그라운드 상주 | 포그라운드 서비스 + 부팅 시 자동 시작 | 트레이 + `shell:startup` | 메뉴 막대 + 로그인 항목 |

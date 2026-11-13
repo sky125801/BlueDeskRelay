@@ -38,11 +38,14 @@
 | 发送整个文件夹 | ✓ 经 SAF 目录树 | ✓ `BATCH_*` 批量帧 | — |
 | 接收文本 → 剪贴板 | ✓ 同时发通知 | ✓ 同时弹气泡 | ✓ 同时发通知 |
 | 接收文件 | ✓ `Download/BlueDesk` | ✓ `Downloads\BlueDesk` | ✓ `~/Downloads/BlueDesk` |
-| 接收文件夹 | ✓ | ✓ | — |
+| 接收文件夹 | ✓ | ✓ | ✓ `~/Downloads/BlueDesk` |
 | 全局热键 | — | `Ctrl+Alt+B` / `Ctrl+Alt+F` | `Ctrl+Opt+B` / `Ctrl+Opt+F` |
 | 系统集成 | 系统分享目标 | 资源管理器右键菜单 | Finder「服务」菜单 |
 | 后台常驻 | 前台服务 + 开机自启 | 托盘 + `shell:startup` | 菜单栏 + 登录项 |
 | Wi-Fi 数据通道（自动切换） | ✓ | ✓ | ✓ |
+| 通知镜像（手机通知 → 电脑） | — | ✓ 气泡 | ✓ 系统通知 |
+| 剪贴板双向同步 | — | ✓ 自动轮询 | ✓ 自动轮询 |
+| 断开连接自动锁屏 | — | ✓ 手机下发策略 | ✓ 手机下发策略 |
 | 遵循手机下发的传输上限 | ✓ | ✓ | ✓ |
 
 `—` 表示该端暂未实现，不影响其他两端之间的互传。
@@ -88,7 +91,8 @@ Swift + SwiftPM 菜单栏程序（`LSUIElement`），基于 IOBluetooth 的经�
 - **帧格式**：11 字节头（MAGIC / 版本 / 类型 / FLAGS / 长度 / CRC32 低 16 位）+ 载荷
 - **帧类型**：`HELLO`、`TEXT`、`FILE_META`、`FILE_CHUNK`、`FILE_END`、`ACK`、`PING`、`PONG`、
   `ERROR`、`CONFIG`、`BATCH_META`、`BATCH_END`、`NET_INFO`、`IDENT`、
-  `AGENT_INFO`、`SCRIPT_STEP`、`SCRIPT_STEP_ACK`、`RECORD_CTRL`、`RECORD_RESULT`
+  `AGENT_INFO`、`SCRIPT_STEP`、`SCRIPT_STEP_ACK`、`RECORD_CTRL`、`RECORD_RESULT`、
+  `LIVE_INPUT`、`INPUT_STATE`、`NOTIFICATION`、`CLIPBOARD`、`DEVICE_POLICY`
 - **分块**：蓝牙 4 KB（受 RFCOMM MTU 限制），Wi-Fi 64 KB（由 `NET_INFO` 的 `chunk` 字段下发）
 - **传输上限**：默认 64 MB，由手机通过 `CONFIG` 帧统一下发（0 表示不限）
 - **性能**：SPP 通道实测约 50~200 KB/s；Wi-Fi 通道受限于局域网，实测可达数十 MB/s
@@ -114,11 +118,26 @@ Wi-Fi 端点完全由手机通过 `NET_INFO` 自动下发，PC 端不提供手�
 > 旧版本 PC 端不认识 `NET_INFO`，会直接忽略并继续走蓝牙；手机端对没有 `IDENT` 的会话
 > 沿用原来的 MAC 作键。两个方向都向后兼容，可以分批升级。
 
+### 通知 / 剪贴板 / 实时输入 / 设备策略
+
+除文本与文件外，PC 还会处理手机主动下发的几类帧（Android 端目前只做文本与文件）：
+
+- **通知镜像**：手机发 `NOTIFICATION {"app","title","text","at","pkg"}`，
+  Windows 弹气泡、macOS 发系统通知。
+- **剪贴板同步**：双向 `CLIPBOARD {"text","at"}`；PC 轮询本机剪贴板变化后自动回发，
+  收到的文本静默写入系统剪贴板（不弹提示，两端各自抑制回环）。
+- **实时输入**：手机发 `LIVE_INPUT` 实时键鼠事件，PC 用 `SendInput` / `CGEvent` 注入，
+  并回 `INPUT_STATE {"appliedSeq","rtt","ok"}`（约 100 ms 一次）。
+- **设备策略**：手机发 `DEVICE_POLICY {"lockOnDisconnect":true}`，PC 缓存该策略，
+  控制链路断开时据此锁屏。
+
 ### 脚本代理通道
 
 装了配套应用的 PC 可以代替手机执行自动化脚本，手机不再逐条上报 HID 报告：
 
-1. PC 在 `HELLO` / `IDENT` 之后发 `AGENT_INFO`：`{"script":1,"platform":"win","unicode":1,"secure":0|1}`。
+1. PC 在 `HELLO` / `IDENT` 之后发 `AGENT_INFO`：
+   `{"script":1,"platform":"win","unicode":1,"secure":0|1,"input":1,"text":1}`
+   （`input` 表示支持实时输入车道，`text` 表示支持 Unicode 文本直送）。
 2. 手机收到后把该设备标记为「可代理」，执行引擎优先走这条通道；
    未收到的设备仍按原来的 HID 通道执行，脚本本身不需要改动。
 3. 每执行一步，手机发 `SCRIPT_STEP`：
@@ -143,8 +162,8 @@ Wi-Fi 端点完全由手机通过 `NET_INFO` 自动下发，PC 端不提供手�
    macOS 为 `CGEventTap` listen-only），自身注入的事件会按水印跳过。
 4. 手机点「结束录制」→ `RECORD_CTRL {"on":false}`；PC 回
    `RECORD_RESULT {"ok":true,"name":"录制 …","script":{…}}`，脚本随消息内联回传。
-5. 手机解析后直接写入脚本库并提示导入成功；PC 同时会在
-   `下载/BlueDesk/record-*.json` 留一份备份。
+5. 手机解析后直接写入脚本库并提示导入成功；Windows 端会同时在
+   `下载/BlueDesk/record-*.json` 留一份备份，macOS 端只回传、不落盘。
 
 脚本格式与手机完全一致：`move / click / rclick / dclick / wheel / key / combo`，
 坐标为 1280×720 逻辑坐标，`d` 为距上一步的毫秒间隔。

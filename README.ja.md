@@ -37,7 +37,7 @@ BlueDesk スマートフォンアプリの「リレー」ページと組み合�
 | フォルダ送信 | ✓ SAF のディレクトリツリー経由 | ✓ `BATCH_*` フレーム | — |
 | テキスト受信 → クリップボード | ✓ 通知も表示 | ✓ バルーンも表示 | ✓ 通知も表示 |
 | ファイル受信 | ✓ `Download/BlueDesk` | ✓ `Downloads\BlueDesk` | ✓ `~/Downloads/BlueDesk` |
-| フォルダ受信 | ✓ | ✓ | — |
+| フォルダ受信 | ✓ | ✓ | ✓ `~/Downloads/BlueDesk` |
 | グローバルホットキー | — | `Ctrl+Alt+B` / `Ctrl+Alt+F` | `Ctrl+Opt+B` / `Ctrl+Opt+F` |
 | OS 連携 | システムの共有先 | エクスプローラの右クリック | Finder の「サービス」 |
 | バックグラウンド常駐 | フォアグラウンドサービス + 起動時自動開始 | トレイ + `shell:startup` | メニューバー + ログイン項目 |
