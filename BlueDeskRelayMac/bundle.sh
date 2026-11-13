@@ -25,7 +25,19 @@ for lproj in Resources/*.lproj; do
     cp -R "$lproj" "$APP_DIR/Contents/Resources/"
 done
 
-codesign --force --sign - "$APP_DIR" >/dev/null 2>&1 || true
+# 用固定的开发证书签名，不要用 ad-hoc：
+# ad-hoc 签名没有稳定身份，系统的「辅助功能」授权是按 cdhash 记的，
+# 每次编译 cdhash 都会变，授权随之失效（表现为每次启动都要重新申请权限）。
+SIGN_ID="$(security find-identity -v -p codesigning 2>/dev/null \
+    | awk -F'"' '/Apple Development/ {print $2; exit}')"
+if [ -n "$SIGN_ID" ]; then
+    echo "==> 签名：$SIGN_ID"
+    codesign --force --sign "$SIGN_ID" "$APP_DIR" >/dev/null 2>&1 \
+        || codesign --force --sign - "$APP_DIR" >/dev/null 2>&1 || true
+else
+    echo "==> 未找到开发证书，回退 ad-hoc 签名（辅助功能授权会在重新编译后失效）"
+    codesign --force --sign - "$APP_DIR" >/dev/null 2>&1 || true
+fi
 
 echo "==> 完成：$(pwd)/$APP_DIR"
 echo "    双击运行，或复制到 /Applications 与 登录项。"
