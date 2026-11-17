@@ -105,6 +105,10 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     /// 上一次连接「有进展」的时刻（发起打开、换下一个通道都算）。
     /// 超时没进展就强制放弃，否则 `pendingDevice` 会永远挡住定时重连。
     private var connectProgressAt = Date.distantPast
+    /// 等待经典蓝牙 ACL 建立的轮询（ACL 未建立时开 RFCOMM 不会回调）
+    private var aclWaitTimer: Timer?
+    /// 单个通道打开的回调超时（底层偶发「调用成功但永不回调」）
+    private var openTimer: Timer?
 
     // MARK: - Wi-Fi 通道状态
 
@@ -372,6 +376,15 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
             pendingDevice = nil
             return
         }
+
+        // RFCOMM 必须等经典蓝牙 ACL 建立后再开。实测 ACL 没起来时
+        // openRFCOMMChannelAsync 会「返回成功但永不回调」，整条连接就此卡死，
+        // 只能等外部（手动连接、系统自动重连）把 ACL 拉起来才恢复。
+        if !phone.isConnected() {
+            waitForAcl(phone: phone, address: address)
+            return
+        }
+
         guard let channelID = nextChannel() else {
             guard !isConnected else { return }
             pendingDevice = nil
@@ -379,8 +392,6 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
             self.onError?(L10n.t("error.noRelayService", phone.name ?? address))
             return
         }
-
-        if !phone.isConnected() { _ = phone.openConnection() }
 
         connectProgressAt = Date()
         openingChannelID = channelID
@@ -390,12 +401,58 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
         if status != kIOReturnSuccess {
             NSLog("[PhoneLink] 通道 \(channelID) 发起打开失败：0x\(String(status, radix: 16))")
             probeNext(phone: phone, address: address)
+            return
         }
+        armOpenTimeout(phone: phone, address: address, channelID: channelID)
         // 成功发起后等 rfcommChannelOpenComplete 回调
+    }
+
+    /// 等待经典蓝牙 ACL 建立：每 0.5 秒查一次，最多 10 秒。
+    /// 建立后继续开通道；超时说明手机不在范围/未响应，放弃本轮交给看门狗重试。
+    private func waitForAcl(phone: IOBluetoothDevice, address: String) {
+        aclWaitTimer?.invalidate()
+        _ = phone.openConnection()
+        NSLog("[PhoneLink] ACL 未建立，发起 page 并等待…")
+        var waited: TimeInterval = 0
+        aclWaitTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] timer in
+            guard let self, self.pendingDevice?.addressString == address else {
+                timer.invalidate()
+                return
+            }
+            waited += 0.5
+            if phone.isConnected() {
+                timer.invalidate()
+                self.aclWaitTimer = nil
+                self.connectProgressAt = Date()
+                NSLog("[PhoneLink] ACL 已建立（等待 \(String(format: "%.1f", waited))s）")
+                self.openNextChannel()
+                return
+            }
+            guard waited >= 10 else { return }
+            timer.invalidate()
+            self.aclWaitTimer = nil
+            NSLog("[PhoneLink] ACL 10 秒未建立，手机可能不在范围内")
+            self.disconnect()
+        }
+    }
+
+    /// 单通道打开超时：底层偶发「调用成功但永不回调」，不设超时就会一直挂着
+    private func armOpenTimeout(phone: IOBluetoothDevice, address: String,
+                                channelID: BluetoothRFCOMMChannelID) {
+        openTimer?.invalidate()
+        openTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in
+            guard let self, self.openingChannelID == channelID else { return }
+            NSLog("[PhoneLink] 通道 \(channelID) 3 秒无回调，跳过")
+            self.openingChannelID = nil
+            self.openingDevice = nil
+            self.probeNext(phone: phone, address: address)
+        }
     }
 
     /// 通道打开完成（IOBluetooth 回调，主线程）
     func rfcommChannelOpenComplete(_ channel: IOBluetoothRFCOMMChannel!, status: IOReturn) {
+        openTimer?.invalidate()
+        openTimer = nil
         guard let phone = openingDevice, let channelID = openingChannelID else { return }
         openingChannelID = nil
         openingDevice = nil
@@ -551,6 +608,10 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
         verifyTimer = nil
         heartbeatTimer?.invalidate()
         heartbeatTimer = nil
+        aclWaitTimer?.invalidate()
+        aclWaitTimer = nil
+        openTimer?.invalidate()
+        openTimer = nil
         probeQueue = []
         scanPrepared = false
         forceSdpRefresh = false
@@ -559,6 +620,13 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
         closeDataLink()
         closeInputLink()
         guard isConnected else {
+            // 连接中途失败时也要把半开的通道/写线程清掉：
+            // connect() 的入口判断包含 channel == nil，残留一个非空通道会永久挡住重连
+            stopWriter()
+            channel?.setDelegate(nil)
+            channel?.close()
+            channel = nil
+            phoneDevice = nil
             tcp?.close()
             tcp = nil
             return
