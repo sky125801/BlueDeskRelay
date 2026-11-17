@@ -479,7 +479,6 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
         netInfoReceived = false          // 等本轮 NET_INFO 再连数据链路
         mtu = Self.resolveMTU(of: opened)
         startWriter(.rfcomm(opened))
-        onStateChange?(true, phoneName)
         sendFrame(Protocol.hello(localName))
         sendFrame(Protocol.ident(identJSON(wifi: false)))
         sendFrame(Protocol.agentInfo(script: true, platform: "mac",
@@ -491,14 +490,23 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
         startHeartbeat()
     }
 
-    /// 备好本轮候选通道：上次成功的 → SDP 给的 → 1...30（去重）
+    /// 备好本轮候选通道：刷新的 SDP → 上次成功的 → 1...30（去重）
+    ///
+    /// 手机端中转服务每次重启都会重新分配通道号，macOS 的 SDP 缓存基本不可信。
+    /// 先把 ACL 拉起来再强制刷一次 SDP，命中就能一步到位；否则才退化成逐个扫。
     private func prepareCandidates(for phone: IOBluetoothDevice, address: String) {
         guard !scanPrepared else { return }
         scanPrepared = true
 
+        if !phone.isConnected() {
+            _ = phone.openConnection()
+            Thread.sleep(forTimeInterval: 1.2)   // 后台线程，等 ACL 起来 SDP 才查得到
+        }
+        forceSdpRefresh = true
+
         var list: [BluetoothRFCOMMChannelID] = []
-        if let saved = savedChannel(for: address) { list.append(saved) }
         if let sdp = relayChannelID(of: phone), !list.contains(sdp) { list.append(sdp) }
+        if let saved = savedChannel(for: address), !list.contains(saved) { list.append(saved) }
         for id in BluetoothRFCOMMChannelID(1)...BluetoothRFCOMMChannelID(30) where !list.contains(id) {
             list.append(id)
         }
@@ -529,6 +537,15 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     private func rememberChannel(_ id: BluetoothRFCOMMChannelID, address: String?) {
         guard let address else { return }
         UserDefaults.standard.set(Int(id), forKey: "relayChannel." + address)
+    }
+
+    /// 校验没过说明通道号记错了（手机上别的服务也能打开成功），清掉记忆
+    @discardableResult
+    private func forgetChannel(_ id: BluetoothRFCOMMChannelID, address: String?) -> Bool {
+        guard let address, savedChannel(for: address) == id else { return false }
+        UserDefaults.standard.removeObject(forKey: "relayChannel." + address)
+        NSLog("[PhoneLink] 清除记错的通道号 \(id)")
+        return true
     }
 
     /// 控制链路心跳：每 10 秒发一次 PING，45 秒收不到任何帧就判定链路已死。
@@ -565,17 +582,26 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
             guard let self, self.channel === opened, self.isConnected else { return }
 
             if self.sawInboundFrame {
-                // 确认可用：记住通道号，本轮探测结束
+                // 确认可用：记住通道号，本轮探测结束。
+                // 这里是唯一的上报点：通道刚打开时还不能算「已连接」，
+                // 手机上的其它服务同样会 accept，打开成功不代表接到了中转服务。
                 self.rememberChannel(channelID, address: device.addressString)
                 self.scanPrepared = false
                 self.probeQueue = []
                 self.connectAttempt = 0
                 NSLog("[PhoneLink] 通道 \(channelID) 校验通过，已记住")
+                self.onStateChange?(true, self.phoneName)
                 return
             }
 
             NSLog("[PhoneLink] 通道 \(channelID) 已打开但手机无响应，试下一个")
-            // 先拆掉本地通道（不报「已断开」），再换下一个通道号
+            // 记错了通道号就忘掉，否则每轮都从这个错的开头试；
+            // 同时强制刷新 SDP —— 手机端中转服务重启后通道号会变，缓存不可信
+            if self.forgetChannel(channelID, address: device.addressString) {
+                self.scanPrepared = false
+                self.forceSdpRefresh = true
+            }
+            // 先拆掉本地通道（不报「已断开」，因为从没报过「已连接」），再换下一个通道号
             self.stopWriter()
             opened.setDelegate(nil)
             opened.close()
@@ -584,7 +610,6 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
             self.isConnected = false
             self.connectedAddress = nil
             self.netInfoReceived = false
-            self.onStateChange?(false, self.phoneName)
 
             self.pendingDevice = device
             self.probeNext(phone: device, address: device.addressString ?? "")
@@ -1375,10 +1400,14 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     func rfcommChannelData(_ rfcommChannel: IOBluetoothRFCOMMChannel!,
                            data dataPointer: UnsafeMutableRawPointer!,
                            length dataLength: Int) {
-        sawInboundFrame = true
-        lastInboundAt = Date()
         let incoming = Data(bytes: dataPointer, count: dataLength)
         let frames = parser.feed(incoming)
+        // 只有解析出合法协议帧才算真的接上了中转服务：
+        // 手机上别的 RFCOMM 服务也会 accept 并吐点数据，凭「有字节」判成功
+        // 会把菜单误报成「已连接」，实际什么都传不了。
+        guard !frames.isEmpty else { return }
+        sawInboundFrame = true
+        lastInboundAt = Date()
         for frame in frames {
             handleFrame(frame)
         }
