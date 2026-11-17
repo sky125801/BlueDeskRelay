@@ -102,6 +102,9 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     /// 正在连接中的目标（连接是多步异步的：先 page 经典蓝牙 ACL，再开 RFCOMM）
     private var pendingDevice: IOBluetoothDevice?
     private var connectAttempt = 0
+    /// 上一次连接「有进展」的时刻（发起打开、换下一个通道都算）。
+    /// 超时没进展就强制放弃，否则 `pendingDevice` 会永远挡住定时重连。
+    private var connectProgressAt = Date.distantPast
 
     // MARK: - Wi-Fi 通道状态
 
@@ -323,6 +326,7 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
         guard !isConnected, channel == nil, pendingDevice == nil else { return }
         pendingDevice = device
         connectAttempt = 0
+        connectProgressAt = Date()
         probeQueue = []
         scanPrepared = false
         attemptOpenRelay()
@@ -378,6 +382,7 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
 
         if !phone.isConnected() { _ = phone.openConnection() }
 
+        connectProgressAt = Date()
         openingChannelID = channelID
         openingDevice = phone
         var chan: IOBluetoothRFCOMMChannel?
@@ -946,8 +951,16 @@ final class PhoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
 
     /// 定时重连入口（状态未连接时尝试一次；数据链路另行重试）
     func ensureConnected() {
-        if pendingDevice != nil { return }   // 正在多步连接中，别打断
-        if !isConnected { connect() }
+        if pendingDevice != nil {
+            // 连接是多步异步的：手机离开范围时 openRFCOMMChannelAsync 可能永不回调，
+            // 没有看门狗就会一直停在「连接中」，只能重启应用才恢复。
+            let idle = Date().timeIntervalSince(connectProgressAt)
+            if idle < 25 { return }
+            NSLog("[PhoneLink] 连接尝试 \(Int(idle)) 秒无进展，重置后重试")
+            disconnect()
+        } else if !isConnected {
+            connect()
+        }
         ensureDataLink()
         ensureInputLink()
     }
